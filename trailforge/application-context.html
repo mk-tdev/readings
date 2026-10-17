@@ -226,8 +226,9 @@ assistant → Azure OpenAI, Azure AI Search, MCP servers, other services (REST, 
 <ul>
 <li><strong>No cross-database access at runtime.</strong> Services call each other&#39;s APIs. Only the seed script writes to all databases.</li>
 <li><strong>Money is integer cents.</strong> JSON is camelCase; SQL is snake_case.</li>
-<li><strong>Identity comes from the verified JWT</strong> and lives in the Agents SDK RunContext. Customer ids are never tool parameters.</li>
-<li><strong>Private tools stay enabled for guests but return <code>AUTH_REQUIRED</code>.</strong> The server then emits an <code>auth_required</code> SSE event, and the UI shows a Log in button.</li>
+<li><strong>The AI app is a separate application:</strong> it reaches the store <strong>only through MCP</strong> (published by the gateway at <code>/mcp/catalog|promotions|account</code>) plus its <strong>own RAG</strong> (Azure AI Search). It never calls store APIs. Products and policies come from RAG; live stock/price, promotions and the user&#39;s own data come from MCP.</li>
+<li><strong>Identity comes from the verified JWT</strong> and lives in the Agents SDK RunContext. Customer ids are never tool parameters; the user&#39;s JWT is sent to the account MCP server per request.</li>
+<li><strong>Account tools stay available to guests but return <code>AUTH_REQUIRED</code>.</strong> The assistant then emits an <code>auth_required</code> SSE event, and the UI shows a Log in button.</li>
 <li><strong>Order stages after placement:</strong> <code>preparing → on_the_way → delivered</code> (admin advances them; history in <code>order_status_history</code>). Checkout commits inventory; cancel and return restock it.</li>
 <li><strong>The return policy</strong> lives in <code>packages/shared/src/types.ts</code> (<code>RETURN_POLICY</code>):<ul>
 <li>60 days from delivery; electronics 30 days;</li>
@@ -242,8 +243,8 @@ assistant → Azure OpenAI, Azure AI Search, MCP servers, other services (REST, 
                     service client, pricing (priceOrder), segments (segmentsFor/tierFor), types
 packages/chat-ui    ChatWidget, ChatPanel, ChatPage, useChat, SSE parser, styles (tfc- prefix)
 services/&lt;name&gt;     src/index.ts (Express) + migrations/*.sql
-services/mcp-*      MCP servers (catalog :4201, promotions :4202) on packages/mcp-kit
-services/assistant  src/agent.ts, mcp.ts, context.ts, session.ts (PostgresSession), tools/public.ts, tools/private.ts
+services/mcp-*      MCP servers (catalog :4201, promotions :4202, account :4203) on packages/mcp-kit; gateway publishes them at /mcp/*
+services/assistant  src/agent.ts, mcp.ts (store MCP via gateway), rag.ts (search_catalog, search_knowledge), context.ts, session.ts (PostgresSession)
 apps/web            Next.js: app/, components/, lib/gateway.ts (server-only), proxy.ts, app/api/session, app/api/[...path]
 apps/chat           Vite React full-screen chat
 data/               products.json (114 products, 527 variants), promotions.json (13 promos)
@@ -359,6 +360,7 @@ npm run typecheck &amp;&amp; npm run build -w @tf/web
 <h2>10. Working agreements for the assistant (next chat)</h2>
 <ul>
 <li>Use <strong>only the OpenAI Agents SDK</strong> for agent logic. No LangGraph or similar.</li>
+<li><strong>Never let the assistant call store service APIs.</strong> New store capabilities for the AI must be added as MCP tools on the e-commerce side (published via the gateway); product/policy knowledge goes into RAG.</li>
 <li>Keep backend services on <strong>Express 5</strong>, the web app on <strong>Next.js 16</strong>, and the chat app on <strong>React + Vite</strong>.</li>
 <li>Respect <strong>service boundaries</strong>: no cross-database queries; add an endpoint instead.</li>
 <li>Follow the existing helpers in <code>@tf/shared</code> (<code>createService</code>, <code>one</code>/<code>many</code>/<code>tx</code>, <code>services.&lt;name&gt;()</code>, <code>HttpError</code>).</li>

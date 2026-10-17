@@ -25,7 +25,8 @@
   │   │   gateway    │──────────────┐                                                        │
   │   └──────────────┘              │ internal ingress only (http://<app-name>)              │
   │     customer · catalog · inventory · order · payment · promotion · marketing             │
-  │     assistant ──► mcp-catalog · mcp-promotions (MCP, Streamable HTTP)                   │
+  │     mcp-catalog · mcp-promotions · mcp-account (published by the gateway at /mcp/*)    │
+  │     assistant ──► gateway /mcp/* only (+ its own Azure AI Search indexes)              │
   │     jobs: db-migrate · db-seed (demo) · rag-ingest                                       │
   │                                                                                         │
   │   Azure Database for PostgreSQL Flexible Server (8 databases: tf_customer … tf_assistant)│
@@ -119,9 +120,10 @@ Start with A, then move to B as a learning step. The app code doesn't change, on
 | `PGPASSWORD` | | Key Vault `pg-password` |
 | `JWT_SECRET`, `INTERNAL_TOKEN` | | Key Vault |
 | `CUSTOMER_URL` … `ASSISTANT_URL` | `http://customer`, `http://catalog`, … | plain (internal DNS) |
-| `MCP_CATALOG_URL`, `MCP_PROMOTIONS_URL` | `http://mcp-catalog/mcp`, `http://mcp-promotions/mcp` | plain (assistant) |
+| `MCP_CATALOG_URL`, `MCP_PROMOTIONS_URL`, `MCP_ACCOUNT_URL` | `http://mcp-catalog/mcp`, `http://mcp-promotions/mcp`, `http://mcp-account/mcp` | plain (gateway → internal MCP servers) |
+| `STORE_MCP_BASE_URL` | `https://api.trailforge…/mcp` (the PUBLIC gateway) | plain (assistant: it reaches the store only through here) |
 | `MCP_HOST` | `0.0.0.0` | MCP servers (bind for container networking) |
-| `MCP_AUTH_TOKEN` | | Key Vault (assistant + MCP servers) |
+| `MCP_AUTH_TOKEN` | | Key Vault (gateway adds it as `x-mcp-key`; MCP servers require it) |
 | `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_CHAT_DEPLOYMENT`, `AZURE_OPENAI_EMBEDDING_DEPLOYMENT` | | plain (assistant, ingest job) |
 | `AZURE_SEARCH_ENDPOINT`, `AZURE_SEARCH_*_INDEX` | | plain (assistant, ingest job) |
 | `AZURE_CLIENT_ID` | Managed Identity client id | plain (so `DefaultAzureCredential` picks the right identity) |

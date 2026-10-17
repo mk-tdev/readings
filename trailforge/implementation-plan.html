@@ -84,12 +84,12 @@ blockquote{margin:16px 0;padding:8px 16px;border-left:4px solid var(--accent);ba
 <td>This is the real security boundary. LLM guardrails are defence in depth on top of it.</td>
 </tr>
 <tr>
-<td>Public data through MCP, private data through function tools</td>
-<td>MCP servers are shared and stateless; private tools forward the user&#39;s token per request.</td>
+<td><strong>The AI app reaches the store only via MCP (through the public gateway) + its own RAG</strong></td>
+<td>The store is another team&#39;s system; the assistant never calls store APIs. Per-user data uses a per-request MCP connection carrying the user&#39;s JWT.</td>
 </tr>
 <tr>
-<td>Static knowledge in Azure AI Search; live data (stock, price, order status) from APIs</td>
-<td>The bot never quotes stale stock or prices.</td>
+<td>Products and knowledge from RAG (Azure AI Search); live stock/price/orders from MCP</td>
+<td>Discovery from the AI app&#39;s own index; the store stays the source of truth for live data.</td>
 </tr>
 <tr>
 <td>Workflows orchestrated in plain TypeScript; agents only where judgment is needed</td>
@@ -119,7 +119,8 @@ blockquote{margin:16px 0;padding:8px 16px;border-left:4px solid var(--accent);ba
 │   ├── marketing/            # segments, campaigns, messages (inbox)
 │   ├── assistant/            # OpenAI Agents SDK: agents, tools, guardrails, workflows, sessions
 │   ├── mcp-catalog/          # MCP server :4201 over the catalog API (public)
-│   └── mcp-promotions/       # MCP server :4202 over the promotion API (public promotions)
+│   ├── mcp-promotions/       # MCP server :4202 over the promotion API (public promotions)
+│   └── mcp-account/          # MCP server :4203, per-user (orders, offers, profile, return check)
 ├── apps/
 │   ├── web/                  # Next.js 16 (App Router) storefront + admin console  → Vercel
 │   └── chat/                 # React + Vite standalone full-screen chat app        → Azure Static Web Apps
@@ -358,9 +359,9 @@ returns:   delivered ──► partially_returned / returned   (refund = amount 
 <td>⬜ Phase 7</td>
 </tr>
 <tr>
-<td>MCP servers (Streamable HTTP), <code>connectMcpServers</code>, tool cache</td>
-<td>catalog / promotion MCP</td>
-<td>✅ (tool filters + MCP tool guardrails in Phase 8)</td>
+<td>MCP servers (Streamable HTTP), <code>connectMcpServers</code>, tool cache, <strong>tool filter</strong>, <strong>per-request authenticated connection</strong></td>
+<td>catalog (filtered), promotions, account (per user) via the gateway</td>
+<td>✅ (MCP tool guardrails in Phase 8)</td>
 </tr>
 <tr>
 <td>Agents as tools (<code>asTool</code>)</td>
@@ -462,9 +463,9 @@ returns:   delivered ──► partially_returned / returned   (refund = amount 
 </tr>
 <tr>
 <td>5</td>
-<td>Assistant core: search tools, MCP servers, streaming chat</td>
+<td>Assistant core: RAG tools, MCP servers, streaming chat</td>
 <td>Pre-login Q&amp;A with citations</td>
-<td>🟡 MCP + streaming verified (OpenAI) · <code>search_knowledge</code> 🔒 Azure AI Search</td>
+<td>🟡 built; MCP + streaming verified · RAG 🔒 needs Azure AI Search</td>
 </tr>
 <tr>
 <td>6</td>
@@ -547,8 +548,11 @@ returns:   delivered ──► partially_returned / returned   (refund = amount 
 <ul>
 <li><input checked="" disabled="" type="checkbox"> Assistant service: one agent, private function tools + MCP tools, Postgres session, SSE protocol, gateway proxy</li>
 <li><input checked="" disabled="" type="checkbox"> Chat widget in the store + full-screen chat app</li>
-<li><input disabled="" type="checkbox"> <code>search_knowledge</code> tool (hybrid search + semantic ranker, citations <code>[source#chunk]</code>)</li>
-<li><input disabled="" type="checkbox"> <code>search_products</code> on <code>tf-products</code> with filters (category, price, tags) + live stock/price check</li>
+<li><input checked="" disabled="" type="checkbox"> <strong>Separate-app boundary:</strong> assistant has no store API calls; function tools removed; store reached only via MCP through the gateway</li>
+<li><input checked="" disabled="" type="checkbox"> <code>mcp-account</code> server (per-user, user JWT per request) + gateway <code>/mcp/*</code> publishing (with <code>x-mcp-key</code>); admin approvals composed by the gateway</li>
+<li><input checked="" disabled="" type="checkbox"> MCP tool filter: agent sees only live catalog tools (<code>get_product</code>, <code>check_stock</code>, <code>get_reviews</code>)</li>
+<li><input checked="" disabled="" type="checkbox"> RAG tools built: <code>search_catalog</code> (tf-products, filters + category facets, dedupe per product) and <code>search_knowledge</code> (tf-knowledge, citations); hybrid + semantic with fallback</li>
+<li><input disabled="" type="checkbox"> 🔒 Test RAG tools against Azure AI Search (create the service, <code>rag:ingest</code>)</li>
 <li><input checked="" disabled="" type="checkbox"> MCP servers <code>mcp-catalog</code> (5 tools, resource + template, prompt) and <code>mcp-promotions</code> (3 tools, resource, prompt) on a shared <code>@tf/mcp-kit</code> host (Streamable HTTP, stateless)</li>
 <li><input checked="" disabled="" type="checkbox"> Assistant connects with <code>connectMcpServers</code> (<code>dropFailed</code>, 30 s retry); falls back to local function tools when a server is down; <code>/api/admin/assistant/status</code></li>
 <li><input checked="" disabled="" type="checkbox"> <code>npm run smoke:mcp</code> (19 checks) and <code>npm run mcp:inspector</code></li>

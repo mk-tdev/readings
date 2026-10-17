@@ -163,40 +163,31 @@ Ask the same 5 questions three ways, note the top-3 `source` each time:
 
 ## 9. Use it from the assistant (agentic RAG)
 
-The search index is filled by `rag:ingest`; the **assistant tool that queries it (`search_knowledge`) is the next build step (Phase 5).** This is what it looks like, with the same SDK as the ingest script:
+The assistant is a separate app that may not call the store's APIs, so **all product discovery and policy answers come from these indexes**. Two tools in `services/assistant/src/rag.ts` query them:
 
+| Tool | Index | What it does |
+|---|---|---|
+| `search_catalog` | `tf-products` | Hybrid search + optional filters (`category`, `brand`, `minPriceDollars`, `maxPriceDollars`, `tag`). An **empty query** browses and returns **product counts per category** (a facet), which is how "list all products" works. Several chunks per product → keeps the best chunk per `slug`. Returns name, brand, list price (snapshot), slug and `[source#chunk]`. |
+| `search_knowledge` | `tf-knowledge` | Hybrid search over policies, guides and FAQs; returns passages with `[source#chunk]` ids to cite. |
+
+How a query runs:
 ```ts
-import { SearchClient } from '@azure/search-documents';
-import { DefaultAzureCredential } from '@azure/identity';
-import { tool } from '@openai/agents';
-import { z } from 'zod';
-
-const search = new SearchClient<Chunk>(process.env.AZURE_SEARCH_ENDPOINT!, 'tf-knowledge', new DefaultAzureCredential());
-
-export const searchKnowledge = tool({
-  name: 'search_knowledge',
-  description: 'Search TrailForge policies, guides and FAQs (returns, refunds, shipping, warranty, sizing, care…). ' +
-               'Returns passages with [source#chunk] ids; cite them in the answer.',
-  parameters: z.object({ query: z.string().describe('A focused search query rephrased from the question'), top: z.number().int().min(1).max(8).default(5) }),
-  execute: async ({ query, top }) => {
-    const vector = (await openai.embeddings.create({ model: EMBED_DEPLOYMENT, input: query })).data[0].embedding;
-    const results = await search.search(query, {                     // keyword part
-      top,
-      select: ['source', 'section', 'chunkIndex', 'content'],
-      vectorSearchOptions: { queries: [{ kind: 'vector', vector, fields: ['contentVector'], kNearestNeighborsCount: 50 }] }, // vector part → hybrid (RRF)
-      queryType: 'semantic', semanticSearchOptions: { configurationName: 'semantic' },                                    // optional re-rank (Basic+)
-    });
-    const passages = [];
-    for await (const r of results.results) passages.push(`[${r.document.source}#${r.document.chunkIndex}] ${r.document.section}\n${r.document.content}`);
-    return passages.length ? passages.join('\n---\n') : "NO_RELEVANT_PASSAGES: say you don't know and offer the support contact.";
-  },
+const vector = await embed(query);                                  // same provider/model as rag:ingest
+const res = await client.search(query || '*', {
+  top, filter,                                                      // e.g. "category eq 'tents' and priceCents le 40000"
+  facets: ['category,count:20'],                                    // product counts per category
+  vectorSearchOptions: { queries: [{ kind: 'vector', vector, fields: ['contentVector'], kNearestNeighborsCount: 50 }] }, // → hybrid (RRF)
+  queryType: 'semantic', semanticSearchOptions: { configurationName: 'semantic' },                                    // re-rank when available
 });
 ```
+- If the semantic ranker isn't enabled (e.g. Free tier), the first call fails once and the tool switches to plain hybrid automatically. Set `AZURE_SEARCH_SEMANTIC=false` to skip trying.
+- If `AZURE_SEARCH_ENDPOINT` is empty, both tools return `SEARCH_UNAVAILABLE` and the agent says search is temporarily unavailable. It never guesses.
+- **Live data stays live:** the list price in the index is a snapshot. For "is size 10 in stock right now?" or the exact current price, the agent uses the store's MCP catalog tools `check_stock` / `get_product` with the slug from `search_catalog`.
+- `GET /api/admin/assistant/status` → `rag: { configured, endpoint, indexes, embeddings }`.
 
-**Why a tool ("agentic RAG") instead of always stuffing passages into the prompt?**
-- The agent decides *when* it needs knowledge (product questions use MCP catalog tools; policy questions use `search_knowledge`).
-- It can rephrase the query, search twice, or combine with live data ("is this tent in stock *and* can I return it?").
-- Guardrails attach naturally: relevance cutoff, injection scan on returned chunks, and citation checks (Phase 8).
+**Why tools ("agentic RAG") instead of always stuffing passages into the prompt?**
+- The agent decides *when* it needs which index, can rephrase and search again, and combines RAG with live MCP data ("is this tent in stock *and* can I return it?").
+- Guardrails attach naturally: relevance cutoff, injection scan on returned chunks, citation checks (Phase 8).
 
 ## 10. Security, cost and operations
 
@@ -228,6 +219,7 @@ export const searchKnowledge = tool({
 - [ ] `npm run rag:prepare && npm run rag:ingest` uploaded both indexes
 - [ ] Search explorer + REST keyword/semantic/filter queries return sensible chunks
 - [ ] Compared keyword vs vector vs hybrid on 5 questions
-- [ ] Next: build `search_knowledge` (Phase 5) and add RAG guardrails (Phase 8)
+- [ ] Ask the assistant "list all products", "tents under $400", "return window for electronics?" and check the `search_catalog` / `search_knowledge` tool cards
+- [ ] Next: RAG guardrails (Phase 8)
 
 Related: [Azure OpenAI Setup](azure-openai-setup.md) · [Implementation Plan](implementation-plan.md) (Phases 4, 5, 8) · [Deployment Plan](deployment-plan.md) · [MCP Guide](mcp-guide.md)

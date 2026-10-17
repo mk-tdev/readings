@@ -40,7 +40,8 @@ This is Phase 11 of the <a href="implementation-plan.html">Implementation Plan</
   │   │   gateway    │──────────────┐                                                        │
   │   └──────────────┘              │ internal ingress only (http://&lt;app-name&gt;)              │
   │     customer · catalog · inventory · order · payment · promotion · marketing             │
-  │     assistant ──► mcp-catalog · mcp-promotions (MCP, Streamable HTTP)                   │
+  │     mcp-catalog · mcp-promotions · mcp-account (published by the gateway at /mcp/*)    │
+  │     assistant ──► gateway /mcp/* only (+ its own Azure AI Search indexes)              │
   │     jobs: db-migrate · db-seed (demo) · rag-ingest                                       │
   │                                                                                         │
   │   Azure Database for PostgreSQL Flexible Server (8 databases: tf_customer … tf_assistant)│
@@ -362,9 +363,14 @@ This is Phase 11 of the <a href="implementation-plan.html">Implementation Plan</
 <td>plain (internal DNS)</td>
 </tr>
 <tr>
-<td><code>MCP_CATALOG_URL</code>, <code>MCP_PROMOTIONS_URL</code></td>
-<td><code>http://mcp-catalog/mcp</code>, <code>http://mcp-promotions/mcp</code></td>
-<td>plain (assistant)</td>
+<td><code>MCP_CATALOG_URL</code>, <code>MCP_PROMOTIONS_URL</code>, <code>MCP_ACCOUNT_URL</code></td>
+<td><code>http://mcp-catalog/mcp</code>, <code>http://mcp-promotions/mcp</code>, <code>http://mcp-account/mcp</code></td>
+<td>plain (gateway → internal MCP servers)</td>
+</tr>
+<tr>
+<td><code>STORE_MCP_BASE_URL</code></td>
+<td><code>https://api.trailforge…/mcp</code> (the PUBLIC gateway)</td>
+<td>plain (assistant: it reaches the store only through here)</td>
 </tr>
 <tr>
 <td><code>MCP_HOST</code></td>
@@ -374,7 +380,7 @@ This is Phase 11 of the <a href="implementation-plan.html">Implementation Plan</
 <tr>
 <td><code>MCP_AUTH_TOKEN</code></td>
 <td></td>
-<td>Key Vault (assistant + MCP servers)</td>
+<td>Key Vault (gateway adds it as <code>x-mcp-key</code>; MCP servers require it)</td>
 </tr>
 <tr>
 <td><code>AZURE_OPENAI_ENDPOINT</code>, <code>AZURE_OPENAI_CHAT_DEPLOYMENT</code>, <code>AZURE_OPENAI_EMBEDDING_DEPLOYMENT</code></td>

@@ -5,7 +5,7 @@
 
 ## 1. The big idea in one minute
 
-TrailForge is **one Git repository that holds 18 small Node.js packages** (services, apps, shared libraries, scripts). This setup is called a **monorepo**. Two features make it work:
+TrailForge is **one Git repository that holds 19 small Node.js packages** (services, apps, shared libraries, scripts). This setup is called a **monorepo**. Two features make it work:
 
 1. **npm workspaces**: npm treats every folder matched by the `workspaces` patterns as a package. One `npm install` at the root installs everything, and packages can import each other by name (`import { createService } from '@tf/shared'`) **without publishing anything to npm**.
 2. **TypeScript project references**: `tsc -b` type-checks and builds the backend packages in the right order (shared first, then the services that use it).
@@ -29,7 +29,7 @@ trailforge/                       ← the "root" (workspace root). You run comma
 "workspaces": ["packages/*", "services/*", "apps/*", "scripts/*"]
 ```
 
-Each pattern means "every direct sub-folder that has a `package.json` is a package". Today that's 18:
+Each pattern means "every direct sub-folder that has a `package.json` is a package". Today that's 19:
 
 | Folder | Package name | What it is | Runs with |
 |---|---|---|---|
@@ -47,6 +47,7 @@ Each pattern means "every direct sub-folder that has a `package.json` is a packa
 | `services/assistant` | `@tf/assistant` | Express + OpenAI Agents SDK, 4100 | `tsx watch` |
 | `services/mcp-catalog` | `@tf/mcp-catalog` | MCP server over the catalog API, 4201 | `tsx watch` |
 | `services/mcp-promotions` | `@tf/mcp-promotions` | MCP server over the promotion API, 4202 | `tsx watch` |
+| `services/mcp-account` | `@tf/mcp-account` | Per-user MCP server (orders, offers, profile), 4203 | `tsx watch` |
 | `apps/web` | `@tf/web` | Next.js 16 storefront + admin, 5173 | `next dev` |
 | `apps/chat` | `@tf/chat` | React + Vite full-screen chat, 5174 | `vite` |
 | `scripts/db` | `@tf/db-scripts` | reset / migrate / seed | `tsx` (one-off) |
@@ -154,13 +155,13 @@ npm run typecheck -w @tf/chat-ui
 | `npm run db:reset` | Drop + recreate all 8 databases, migrate, seed (destructive) |
 | `npm run db:migrate` | Apply pending SQL migrations only (safe) |
 | `npm run db:seed` | Re-seed without dropping databases |
-| `npm run dev` | **Everything**: 8 services + 2 MCP servers + assistant + web + chat |
+| `npm run dev` | **Everything**: 8 services + 3 MCP servers + assistant + web + chat |
 | `npm run dev:services` | Only the 7 domain services + gateway |
-| `npm run dev:mcp` | The two MCP servers |
+| `npm run dev:mcp` | The three MCP servers |
 | `npm run dev:assistant` / `dev:web` / `dev:chat` | One part |
 | `npm run smoke:mcp` | Test the MCP servers (19 checks) |
-| `npm run mcp:standalone` | Only what the MCP servers need (catalog, inventory, promotion) + both MCP servers + MCP Inspector web UI |
-| `npm run mcp:inspector` / `mcp:inspect:catalog` / `mcp:inspect:promotions` / `mcp:cli` | MCP Inspector web UI (both servers / one server) or its CLI |
+| `npm run mcp:standalone` | Only what the MCP servers need + all three MCP servers + MCP Inspector web UI |
+| `npm run mcp:inspector` / `mcp:inspect:catalog|promotions|account` / `mcp:cli` | MCP Inspector web UI (all servers / one server) or its CLI |
 | `npm run typecheck` | `tsc -b` over all backend packages |
 | `npm run rag:prepare` / `rag:ingest` | RAG data pipeline |
 | `npm run research:html` | Re-render `research/*.md` to HTML |
@@ -178,7 +179,7 @@ npm run dev
      │        ├─ …inventory, order, payment, promotion, marketing           :4003–4007
      │        └─ npm run dev -w @tf/gateway                                 :3000
      ├─ npm run dev:mcp
-     │    └─ concurrently: mcp-catalog :4201 · mcp-promotions :4202
+     │    └─ concurrently: mcp-catalog :4201 · mcp-promotions :4202 · mcp-account :4203
      ├─ npm run dev:assistant                                               :4100
      ├─ npm run dev:web    → next dev -p 5173
      └─ npm run dev:chat   → vite --port 5174

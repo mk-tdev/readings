@@ -282,38 +282,45 @@ Q tf-products &#39;{&quot;search&quot;:&quot;waterproof&quot;,&quot;filter&quot;
 <li>Hybrid should be at least as good as the better of the two for most questions. That&#39;s why RAG uses it.</li>
 </ul>
 <h2>9. Use it from the assistant (agentic RAG)</h2>
-<p>The search index is filled by <code>rag:ingest</code>; the <strong>assistant tool that queries it (<code>search_knowledge</code>) is the next build step (Phase 5).</strong> This is what it looks like, with the same SDK as the ingest script:</p>
-<pre><code class="language-ts">import { SearchClient } from &#39;@azure/search-documents&#39;;
-import { DefaultAzureCredential } from &#39;@azure/identity&#39;;
-import { tool } from &#39;@openai/agents&#39;;
-import { z } from &#39;zod&#39;;
-
-const search = new SearchClient&lt;Chunk&gt;(process.env.AZURE_SEARCH_ENDPOINT!, &#39;tf-knowledge&#39;, new DefaultAzureCredential());
-
-export const searchKnowledge = tool({
-  name: &#39;search_knowledge&#39;,
-  description: &#39;Search TrailForge policies, guides and FAQs (returns, refunds, shipping, warranty, sizing, care…). &#39; +
-               &#39;Returns passages with [source#chunk] ids; cite them in the answer.&#39;,
-  parameters: z.object({ query: z.string().describe(&#39;A focused search query rephrased from the question&#39;), top: z.number().int().min(1).max(8).default(5) }),
-  execute: async ({ query, top }) =&gt; {
-    const vector = (await openai.embeddings.create({ model: EMBED_DEPLOYMENT, input: query })).data[0].embedding;
-    const results = await search.search(query, {                     // keyword part
-      top,
-      select: [&#39;source&#39;, &#39;section&#39;, &#39;chunkIndex&#39;, &#39;content&#39;],
-      vectorSearchOptions: { queries: [{ kind: &#39;vector&#39;, vector, fields: [&#39;contentVector&#39;], kNearestNeighborsCount: 50 }] }, // vector part → hybrid (RRF)
-      queryType: &#39;semantic&#39;, semanticSearchOptions: { configurationName: &#39;semantic&#39; },                                    // optional re-rank (Basic+)
-    });
-    const passages = [];
-    for await (const r of results.results) passages.push(`[${r.document.source}#${r.document.chunkIndex}] ${r.document.section}\n${r.document.content}`);
-    return passages.length ? passages.join(&#39;\n---\n&#39;) : &quot;NO_RELEVANT_PASSAGES: say you don&#39;t know and offer the support contact.&quot;;
-  },
+<p>The assistant is a separate app that may not call the store&#39;s APIs, so <strong>all product discovery and policy answers come from these indexes</strong>. Two tools in <code>services/assistant/src/rag.ts</code> query them:</p>
+<table>
+<thead>
+<tr>
+<th>Tool</th>
+<th>Index</th>
+<th>What it does</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>search_catalog</code></td>
+<td><code>tf-products</code></td>
+<td>Hybrid search + optional filters (<code>category</code>, <code>brand</code>, <code>minPriceDollars</code>, <code>maxPriceDollars</code>, <code>tag</code>). An <strong>empty query</strong> browses and returns <strong>product counts per category</strong> (a facet), which is how &quot;list all products&quot; works. Several chunks per product → keeps the best chunk per <code>slug</code>. Returns name, brand, list price (snapshot), slug and <code>[source#chunk]</code>.</td>
+</tr>
+<tr>
+<td><code>search_knowledge</code></td>
+<td><code>tf-knowledge</code></td>
+<td>Hybrid search over policies, guides and FAQs; returns passages with <code>[source#chunk]</code> ids to cite.</td>
+</tr>
+</tbody></table>
+<p>How a query runs:</p>
+<pre><code class="language-ts">const vector = await embed(query);                                  // same provider/model as rag:ingest
+const res = await client.search(query || &#39;*&#39;, {
+  top, filter,                                                      // e.g. &quot;category eq &#39;tents&#39; and priceCents le 40000&quot;
+  facets: [&#39;category,count:20&#39;],                                    // product counts per category
+  vectorSearchOptions: { queries: [{ kind: &#39;vector&#39;, vector, fields: [&#39;contentVector&#39;], kNearestNeighborsCount: 50 }] }, // → hybrid (RRF)
+  queryType: &#39;semantic&#39;, semanticSearchOptions: { configurationName: &#39;semantic&#39; },                                    // re-rank when available
 });
 </code></pre>
-<p><strong>Why a tool (&quot;agentic RAG&quot;) instead of always stuffing passages into the prompt?</strong></p>
 <ul>
-<li>The agent decides <em>when</em> it needs knowledge (product questions use MCP catalog tools; policy questions use <code>search_knowledge</code>).</li>
-<li>It can rephrase the query, search twice, or combine with live data (&quot;is this tent in stock <em>and</em> can I return it?&quot;).</li>
-<li>Guardrails attach naturally: relevance cutoff, injection scan on returned chunks, and citation checks (Phase 8).</li>
+<li>If the semantic ranker isn&#39;t enabled (e.g. Free tier), the first call fails once and the tool switches to plain hybrid automatically. Set <code>AZURE_SEARCH_SEMANTIC=false</code> to skip trying.</li>
+<li>If <code>AZURE_SEARCH_ENDPOINT</code> is empty, both tools return <code>SEARCH_UNAVAILABLE</code> and the agent says search is temporarily unavailable. It never guesses.</li>
+<li><strong>Live data stays live:</strong> the list price in the index is a snapshot. For &quot;is size 10 in stock right now?&quot; or the exact current price, the agent uses the store&#39;s MCP catalog tools <code>check_stock</code> / <code>get_product</code> with the slug from <code>search_catalog</code>.</li>
+<li><code>GET /api/admin/assistant/status</code> → <code>rag: { configured, endpoint, indexes, embeddings }</code>.</li>
+</ul>
+<p><strong>Why tools (&quot;agentic RAG&quot;) instead of always stuffing passages into the prompt?</strong></p>
+<ul>
+<li>The agent decides <em>when</em> it needs which index, can rephrase and search again, and combines RAG with live MCP data (&quot;is this tent in stock <em>and</em> can I return it?&quot;).</li>
+<li>Guardrails attach naturally: relevance cutoff, injection scan on returned chunks, citation checks (Phase 8).</li>
 </ul>
 <h2>10. Security, cost and operations</h2>
 <ul>
@@ -386,7 +393,8 @@ export const searchKnowledge = tool({
 <li><input disabled="" type="checkbox"> <code>npm run rag:prepare &amp;&amp; npm run rag:ingest</code> uploaded both indexes</li>
 <li><input disabled="" type="checkbox"> Search explorer + REST keyword/semantic/filter queries return sensible chunks</li>
 <li><input disabled="" type="checkbox"> Compared keyword vs vector vs hybrid on 5 questions</li>
-<li><input disabled="" type="checkbox"> Next: build <code>search_knowledge</code> (Phase 5) and add RAG guardrails (Phase 8)</li>
+<li><input disabled="" type="checkbox"> Ask the assistant &quot;list all products&quot;, &quot;tents under $400&quot;, &quot;return window for electronics?&quot; and check the <code>search_catalog</code> / <code>search_knowledge</code> tool cards</li>
+<li><input disabled="" type="checkbox"> Next: RAG guardrails (Phase 8)</li>
 </ul>
 <p>Related: <a href="azure-openai-setup.html">Azure OpenAI Setup</a> · <a href="implementation-plan.html">Implementation Plan</a> (Phases 4, 5, 8) · <a href="deployment-plan.html">Deployment Plan</a> · <a href="mcp-guide.html">MCP Guide</a></p>
 </main></div></body></html>

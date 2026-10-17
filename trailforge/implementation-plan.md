@@ -51,8 +51,8 @@
 | Orders store a snapshot of product name/price | Orders must not change when the catalog changes. |
 | Identity comes from the verified JWT → Agents SDK `RunContext` | The LLM never decides *who* the user is, so prompt injection can't read another customer's data. |
 | **Services authorize every call themselves** | This is the real security boundary. LLM guardrails are defence in depth on top of it. |
-| Public data through MCP, private data through function tools | MCP servers are shared and stateless; private tools forward the user's token per request. |
-| Static knowledge in Azure AI Search; live data (stock, price, order status) from APIs | The bot never quotes stale stock or prices. |
+| **The AI app reaches the store only via MCP (through the public gateway) + its own RAG** | The store is another team's system; the assistant never calls store APIs. Per-user data uses a per-request MCP connection carrying the user's JWT. |
+| Products and knowledge from RAG (Azure AI Search); live stock/price/orders from MCP | Discovery from the AI app's own index; the store stays the source of truth for live data. |
 | Workflows orchestrated in plain TypeScript; agents only where judgment is needed | Deterministic, testable, auditable. No framework magic. |
 | Money-moving actions need policy checks, and above $100 a human | Refunds are deterministic rules first, the model second. |
 
@@ -77,7 +77,8 @@ trailforge/
 │   ├── marketing/            # segments, campaigns, messages (inbox)
 │   ├── assistant/            # OpenAI Agents SDK: agents, tools, guardrails, workflows, sessions
 │   ├── mcp-catalog/          # MCP server :4201 over the catalog API (public)
-│   └── mcp-promotions/       # MCP server :4202 over the promotion API (public promotions)
+│   ├── mcp-promotions/       # MCP server :4202 over the promotion API (public promotions)
+│   └── mcp-account/          # MCP server :4203, per-user (orders, offers, profile, return check)
 ├── apps/
 │   ├── web/                  # Next.js 16 (App Router) storefront + admin console  → Vercel
 │   └── chat/                 # React + Vite standalone full-screen chat app        → Azure Static Web Apps
@@ -178,7 +179,7 @@ Streaming caveat: output guardrails run after the full answer, so high-stakes an
 | Sessions (custom Postgres session) | Chat memory survives restarts and login | ✅ |
 | Streaming events → SSE | Text deltas, tool calls, auth prompts (verified live) | ✅ (handoff events in Phase 7) |
 | `isEnabled` on tools | Admin-only tools hidden from customers | ⬜ Phase 7 |
-| MCP servers (Streamable HTTP), `connectMcpServers`, tool cache | catalog / promotion MCP | ✅ (tool filters + MCP tool guardrails in Phase 8) |
+| MCP servers (Streamable HTTP), `connectMcpServers`, tool cache, **tool filter**, **per-request authenticated connection** | catalog (filtered), promotions, account (per user) via the gateway | ✅ (MCP tool guardrails in Phase 8) |
 | Agents as tools (`asTool`) | Product Expert used from Deals | ⬜ Phase 7 |
 | Handoffs (`handoff()`, inputFilter, onHandoff, inputType) | Concierge → specialists | ⬜ Phase 7 |
 | Structured output (`outputType`) | Classifiers, refund decision, ranked offers, campaign draft | ⬜ Phases 7–9 |
@@ -211,7 +212,7 @@ Streaming caveat: output guardrails run after the full answer, so high-stakes an
 | 2 | Microservices REST APIs + seed (30 users, 100 orders) | Queryable data, smoke-tested | ✅ |
 | 3 | Next.js storefront, admin console, auth, order stages | Working shop + admin | ✅ |
 | 4 | Azure AI foundation + RAG data, ingest & eval set | Search returns good results | 🟡 docs + scripts done · 🔒 Azure |
-| 5 | Assistant core: search tools, MCP servers, streaming chat | Pre-login Q&A with citations | 🟡 MCP + streaming verified (OpenAI) · `search_knowledge` 🔒 Azure AI Search |
+| 5 | Assistant core: RAG tools, MCP servers, streaming chat | Pre-login Q&A with citations | 🟡 built; MCP + streaming verified · RAG 🔒 needs Azure AI Search |
 | 6 | Login-aware chat & memory | Pre/post-login chat | ✅ verified live (session trimming still open) |
 | 7 | Multi-agent: handoffs, agents as tools, structured output | Specialist agents | ⬜ |
 | 8 | Guardrails & safety | Layered protection + red-team eval | ⬜ (8a can start now) |
@@ -253,8 +254,11 @@ Streaming caveat: output guardrails run after the full answer, so high-stakes an
 ### Phase 5: Assistant core 🟡
 - [x] Assistant service: one agent, private function tools + MCP tools, Postgres session, SSE protocol, gateway proxy
 - [x] Chat widget in the store + full-screen chat app
-- [ ] `search_knowledge` tool (hybrid search + semantic ranker, citations `[source#chunk]`)
-- [ ] `search_products` on `tf-products` with filters (category, price, tags) + live stock/price check
+- [x] **Separate-app boundary:** assistant has no store API calls; function tools removed; store reached only via MCP through the gateway
+- [x] `mcp-account` server (per-user, user JWT per request) + gateway `/mcp/*` publishing (with `x-mcp-key`); admin approvals composed by the gateway
+- [x] MCP tool filter: agent sees only live catalog tools (`get_product`, `check_stock`, `get_reviews`)
+- [x] RAG tools built: `search_catalog` (tf-products, filters + category facets, dedupe per product) and `search_knowledge` (tf-knowledge, citations); hybrid + semantic with fallback
+- [ ] 🔒 Test RAG tools against Azure AI Search (create the service, `rag:ingest`)
 - [x] MCP servers `mcp-catalog` (5 tools, resource + template, prompt) and `mcp-promotions` (3 tools, resource, prompt) on a shared `@tf/mcp-kit` host (Streamable HTTP, stateless)
 - [x] Assistant connects with `connectMcpServers` (`dropFailed`, 30 s retry); falls back to local function tools when a server is down; `/api/admin/assistant/status`
 - [x] `npm run smoke:mcp` (19 checks) and `npm run mcp:inspector`

@@ -17,8 +17,8 @@ blockquote{margin:16px 0;padding:8px 16px;border-left:4px solid var(--accent);ba
 @media (max-width:760px){.wrap{grid-template-columns:1fr}nav{position:static;height:auto;border-right:0;border-bottom:1px solid var(--line)}main{padding:24px 16px 80px}}
 </style></head><body><div class="wrap"><nav><a href="../" class="hub-link">← All readings</a><b>TrailForge research</b><a href="application-context.html" class="">TrailForge: Application Context</a><a href="architecture.html" class="">TrailForge: Architecture & Contracts</a><a href="azure-ai-search-rag-setup.html" class="">Azure AI Search for RAG: Setup Guide</a><a href="azure-openai-setup.html" class="">Azure OpenAI Setup Guide</a><a href="deployment-plan.html" class="">TrailForge: Deployment Plan</a><a href="implementation-plan.html" class="">TrailForge: Implementation Plan</a><a href="mcp-guide.html" class="on">MCP Guide: TrailForge's MCP Servers</a><a href="monorepo-guide.html" class="">Monorepo Guide: How the TrailForge Workspace Works</a></nav><main><h1>MCP Guide: TrailForge&#39;s MCP Servers</h1>
 <blockquote>
-<p>How the Model Context Protocol (MCP) works, how TrailForge&#39;s two MCP servers are built, how the assistant uses them, and how to test, extend and connect to them.
-Code: <code>packages/mcp-kit</code>, <code>services/mcp-catalog</code>, <code>services/mcp-promotions</code>, <code>services/assistant/src/mcp.ts</code>.</p>
+<p>How the Model Context Protocol (MCP) works, how TrailForge&#39;s three MCP servers are built, how the gateway publishes them, how the assistant (a separate app) uses them, and how to test, extend and connect to them.
+Code: <code>packages/mcp-kit</code>, <code>services/mcp-catalog</code>, <code>services/mcp-promotions</code>, <code>services/mcp-account</code>, <code>services/gateway</code> (<code>/mcp/*</code>), <code>services/assistant/src/mcp.ts</code>.</p>
 </blockquote>
 <h2>1. MCP in one minute</h2>
 <p><strong>MCP</strong> is an open protocol that lets an AI application discover and use capabilities that live in <strong>another process</strong>. It&#39;s like a USB port for AI tools: write a server once, and any MCP client can plug into it (our assistant, Claude Code, VS Code, MCP Inspector…).</p>
@@ -39,7 +39,7 @@ Code: <code>packages/mcp-kit</code>, <code>services/mcp-catalog</code>, <code>se
 </tr>
 <tr>
 <td><strong>Server</strong>: exposes capabilities</td>
-<td><code>mcp-catalog</code>, <code>mcp-promotions</code></td>
+<td><code>mcp-catalog</code>, <code>mcp-promotions</code>, <code>mcp-account</code></td>
 </tr>
 </tbody></table>
 <p>A server offers three kinds of things:</p>
@@ -69,35 +69,53 @@ Code: <code>packages/mcp-kit</code>, <code>services/mcp-catalog</code>, <code>se
 </tbody></table>
 <p>Messages are <strong>JSON-RPC 2.0</strong>. The transport we use is <strong>Streamable HTTP</strong>: the client <code>POST</code>s JSON-RPC to <code>/mcp</code>, and the server answers with JSON or a short Server-Sent-Events stream.</p>
 <h2>2. How it fits into TrailForge</h2>
-<pre><code> browser ─► gateway ─► assistant (MCP host, OpenAI Agents SDK)
-                          │
-                          ├─ MCP client ──POST /mcp──► mcp-catalog    :4201 ──REST──► catalog service   :4002
-                          ├─ MCP client ──POST /mcp──► mcp-promotions :4202 ──REST──► promotion service :4006
-                          │
-                          └─ function tools (private, with the user&#39;s JWT) ──REST──► order · promotion · customer
+<p><strong>The rule:</strong> the AI assistant is a <strong>separate application</strong> (another team, possibly hosted elsewhere). It may reach the store <strong>only through MCP</strong>, published by the store&#39;s public gateway, plus its <strong>own RAG indexes</strong>. It never calls store service APIs.</p>
+<pre><code> AI APP (assistant)                                 E-COMMERCE (other team)
+ ──────────────────                                 ─────────────────────────────────────────────────────
+ search_catalog / search_knowledge ─► Azure AI Search (RAG indexes owned by the AI app)
+
+ MCP client &quot;catalog&quot;    ─POST /mcp/catalog────►  public gateway :3000 ─► mcp-catalog    :4201 ─► catalog, inventory
+ MCP client &quot;promotions&quot; ─POST /mcp/promotions─►        (adds x-mcp-key) ─► mcp-promotions :4202 ─► promotion
+ MCP client &quot;account&quot;    ─POST /mcp/account────►        (passes user JWT) ─► mcp-account   :4203 ─► order, customer, promotion
+    (new connection per chat request, Authorization: Bearer &lt;that user&#39;s JWT&gt;)
 </code></pre>
-<p><strong>Public data via MCP, private data via function tools.</strong> This is the key rule:</p>
 <table>
 <thead>
 <tr>
 <th>Data</th>
-<th>Where the tool lives</th>
+<th>Comes from</th>
 <th>Why</th>
 </tr>
 </thead>
 <tbody><tr>
-<td>Products, stock, reviews, categories, public promotions</td>
-<td>MCP servers</td>
-<td>Same for everyone; reusable by any MCP client; can scale separately</td>
+<td>Finding/listing products, specs, comparisons</td>
+<td><strong>RAG</strong>: <code>search_catalog</code> over <code>tf-products</code></td>
+<td>The AI app&#39;s own index (a published snapshot of the catalog)</td>
 </tr>
 <tr>
-<td>My orders, my offers, my profile</td>
-<td>Assistant function tools (<code>tools/private.ts</code>)</td>
-<td>Needs <em>this</em> user&#39;s identity. An MCP connection is created once with fixed headers, so it can&#39;t carry a different user&#39;s JWT on each call. The tool reads the token from the Agents SDK <code>RunContext</code>.</td>
+<td>Policies, guides, FAQs</td>
+<td><strong>RAG</strong>: <code>search_knowledge</code> over <code>tf-knowledge</code></td>
+<td>Same</td>
+</tr>
+<tr>
+<td>Live stock, exact current price, reviews</td>
+<td><strong>MCP catalog</strong>, filtered to <code>get_product</code>, <code>check_stock</code>, <code>get_reviews</code></td>
+<td>The index is a snapshot; the store owns live data</td>
+</tr>
+<tr>
+<td>Public promotions, promo-code checks</td>
+<td><strong>MCP promotions</strong></td>
+<td>Live, public</td>
+</tr>
+<tr>
+<td>My orders, order details, my offers, my profile, return eligibility</td>
+<td><strong>MCP account</strong>, called as the user</td>
+<td>Personal data: the store checks the user&#39;s JWT on every call</td>
 </tr>
 </tbody></table>
-<p><code>mcp-promotions</code> calls the promotion API <strong>anonymously</strong>, so even if someone talks to it directly it can only see public promotions. Member-only codes answer &quot;Log in to use GOLD15&quot;.</p>
-<p>The MCP servers have <strong>no database</strong>. They&#39;re thin facades over the services&#39; REST APIs, so the &quot;each service owns its data&quot; rule still holds.</p>
+<p><strong>Per-user MCP.</strong> An MCP connection has fixed headers, so one shared connection can&#39;t act for different users. TrailForge solves this by opening a <strong>new <code>account</code> connection for every chat request</strong> carrying that user&#39;s JWT. Because our servers are stateless, a connection is just a couple of cheap HTTP calls. <code>mcp-kit</code> hands the token to <code>buildServer({ userToken })</code>, so every tool in that request acts as exactly that user, and the services verify the token. Guests connect without a token; the tools answer <code>AUTH_REQUIRED</code> and the app shows a Log in button.</p>
+<p><strong>Tool filtering.</strong> <code>mcp-catalog</code> offers 5 tools to any MCP client, but the assistant connects with <code>toolFilter: { allowed: [&#39;get_product&#39;, &#39;check_stock&#39;, &#39;get_reviews&#39;] }</code>. Discovery (<code>search_products</code>, <code>list_categories</code>) must come from RAG, so the agent never sees those tools.</p>
+<p><code>mcp-promotions</code> calls the promotion API <strong>anonymously</strong>, so it can only ever see public promotions. All MCP servers have <strong>no database</strong>: they&#39;re the e-commerce team&#39;s thin facades over their own services.</p>
 <h2>3. The code</h2>
 <h3>3.1 <code>packages/mcp-kit</code>: the shared host</h3>
 <p><code>startMcpServer({ name, defaultPort, buildServer })</code> gives every MCP server the same plumbing:</p>
@@ -121,8 +139,12 @@ Code: <code>packages/mcp-kit</code>, <code>services/mcp-catalog</code>, <code>se
 <td><code>127.0.0.1</code> by default; the SDK then adds <strong>DNS-rebinding protection</strong> (a malicious web page can&#39;t trick your browser into calling it). In a container set <code>MCP_HOST=0.0.0.0</code>.</td>
 </tr>
 <tr>
-<td>Auth</td>
-<td>Optional shared secret: if <code>MCP_AUTH_TOKEN</code> is set, callers must send <code>Authorization: Bearer &lt;token&gt;</code>. (Public MCP servers would use the spec&#39;s OAuth 2.1 flow; ours are internal-only.)</td>
+<td>Auth: caller</td>
+<td>Optional shared secret: if <code>MCP_AUTH_TOKEN</code> is set, callers must send <code>x-mcp-key: &lt;token&gt;</code>. The public gateway adds it, so MCP servers only accept traffic via the gateway (on Azure they also have internal-only ingress).</td>
+</tr>
+<tr>
+<td>Auth: end user</td>
+<td><code>Authorization: Bearer &lt;user JWT&gt;</code> is read and passed to <code>buildServer({ userToken })</code> (null for guests). Not verified by mcp-kit; the services verify it. (MCP servers open to arbitrary clients would use the spec&#39;s OAuth 2.1 flow.)</td>
 </tr>
 <tr>
 <td>Health</td>
@@ -246,20 +268,65 @@ Code: <code>packages/mcp-kit</code>, <code>services/mcp-catalog</code>, <code>se
 </tr>
 </tbody></table>
 <p>Resource: <code>promotions://active</code>. Prompt: <code>find_best_deal(shoppingList)</code>.</p>
-<h3>3.4 The assistant side (<code>services/assistant/src/mcp.ts</code> + <code>agent.ts</code>)</h3>
-<pre><code class="language-ts">mcp = await connectMcpServers(
-  [server(&#39;catalog&#39;, MCP_CATALOG_URL), server(&#39;promotions&#39;, MCP_PROMOTIONS_URL)],
-  { dropFailed: true, connectInParallel: true, connectTimeoutMs: 5000 },
-);
-// per chat request:
-new Agent({ tools: [...privateTools, ...fallbacks], mcpServers: mcp.active, … });
+<p><strong>mcp-account</strong> (<code>:4203/mcp</code>), per user: send <code>Authorization: Bearer &lt;user JWT&gt;</code></p>
+<table>
+<thead>
+<tr>
+<th>Tool</th>
+<th>Arguments</th>
+<th>Returns</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>get_my_profile</code></td>
+<td>none</td>
+<td>Profile + loyalty tier/points</td>
+</tr>
+<tr>
+<td><code>get_my_orders</code></td>
+<td>none</td>
+<td>Orders with status (preparing, on_the_way, delivered, …) and totals</td>
+</tr>
+<tr>
+<td><code>get_order_details</code></td>
+<td><code>orderNumber</code> (<code>TF-123456</code>)</td>
+<td>Items, shipments/tracking, stage history, returns (only the user&#39;s own orders, otherwise &quot;not found&quot;)</td>
+</tr>
+<tr>
+<td><code>get_my_offers</code></td>
+<td>none</td>
+<td>Personal + public offers the user is eligible for</td>
+</tr>
+<tr>
+<td><code>check_return_eligibility</code></td>
+<td><code>orderNumber</code>, <code>items[{orderItemId, qty}]</code></td>
+<td>Dry run: eligible?, problems, refund amount, automatic or staff approval (changes nothing)</td>
+</tr>
+</tbody></table>
+<p>Without a token every tool answers <code>AUTH_REQUIRED: …</code>.</p>
+<h3>3.4 The gateway: publishing MCP (<code>services/gateway/src/index.ts</code>)</h3>
+<p><code>POST /mcp/catalog | /mcp/promotions | /mcp/account</code> → the internal MCP servers. The gateway passes through <code>content-type</code>, <code>accept</code>, <code>authorization</code> (the user&#39;s JWT) and the MCP protocol headers, <strong>adds <code>x-mcp-key</code></strong>, and streams the response (JSON or SSE) back unchanged. This is the store&#39;s single public door for AI clients.</p>
+<h3>3.5 The assistant side (<code>services/assistant/src/mcp.ts</code>, <code>agent.ts</code>, <code>index.ts</code>)</h3>
+<pre><code class="language-ts">// shared connections, opened once (STORE_MCP_BASE_URL = the PUBLIC gateway, e.g. http://localhost:3000/mcp)
+shared = await connectMcpServers([
+  new MCPServerStreamableHttp({ name: &#39;catalog&#39;, url: `${base}/catalog`, cacheToolsList: true,
+    toolFilter: createMCPToolStaticFilter({ allowed: [&#39;get_product&#39;, &#39;check_stock&#39;, &#39;get_reviews&#39;] }) }),
+  new MCPServerStreamableHttp({ name: &#39;promotions&#39;, url: `${base}/promotions`, cacheToolsList: true }),
+], { dropFailed: true, connectInParallel: true });
+
+// per chat request: the user&#39;s own connection
+const account = new MCPServerStreamableHttp({ name: &#39;account&#39;, url: `${base}/account`,
+  requestInit: token ? { headers: { Authorization: `Bearer ${token}` } } : undefined });
+await account.connect();
+new Agent({ tools: [searchCatalog, searchKnowledge], mcpServers: [...shared.active, account], … });
+// …run… then account.close()
 </code></pre>
 <ul>
-<li><strong><code>dropFailed: true</code>:</strong> a server that&#39;s down is skipped instead of crashing the assistant; failed servers are retried every 30 s, so start-up order doesn&#39;t matter.</li>
-<li><strong><code>cacheToolsList: true</code>:</strong> tools are listed once, not on every agent turn.</li>
-<li><strong>Fallbacks:</strong> if <code>catalog</code> isn&#39;t connected, the local function tools <code>search_products</code> + <code>get_product_details</code> are added; if <code>promotions</code> isn&#39;t, <code>get_public_promotions</code>. Names never clash because a fallback is only added when its MCP server is missing.</li>
-<li>The agent is built <strong>per request</strong> (<code>createAssistant()</code>), so a server that comes back is picked up on the next message.</li>
-<li><code>GET /api/admin/assistant/status</code> (admin) shows <code>{ model, mcp: [{ name, connected, tools[] }] }</code>.</li>
+<li><strong>No function tool calls a store API.</strong> The only local tools are the RAG tools over the AI app&#39;s own search indexes.</li>
+<li><strong><code>dropFailed: true</code>:</strong> a server that&#39;s down is skipped, so the agent has fewer tools and says that part is unavailable. Failed servers are retried every 30 s.</li>
+<li><strong><code>AUTH_REQUIRED</code> → Log in button:</strong> when an account tool&#39;s output contains <code>AUTH_REQUIRED</code>, the assistant sends one <code>auth_required</code> SSE event.</li>
+<li><strong>Login mid-conversation:</strong> when a guest conversation is adopted by a logged-in user, the assistant adds a system note (&quot;the customer has just logged in…&quot;) to that turn, so the model calls the account tools again instead of repeating the old &quot;please log in&quot; answer.</li>
+<li><code>GET /api/admin/assistant/status</code> (admin) shows the provider, the RAG configuration and each MCP server&#39;s <code>tools</code> (what the server offers) and <code>agentTools</code> (what the agent may use after filtering).</li>
 </ul>
 <h2>4. What happens on the wire</h2>
 <pre><code>client                                    mcp-catalog
@@ -282,8 +349,8 @@ new Agent({ tools: [...privateTools, ...fallbacks], mcpServers: mcp.active, … 
 <h2>5. Running and testing</h2>
 <h3>Standalone: just the MCP servers, nothing else</h3>
 <pre><code class="language-bash">npm run db:up            # Postgres
-npm run mcp:standalone   # catalog :4002 + inventory :4003 + promotion :4006 (what the MCP servers call)
-                         # + mcp-catalog :4201 + mcp-promotions :4202
+npm run mcp:standalone   # the REST services the MCP servers call (customer, catalog, inventory, order, promotion, marketing)
+                         # + mcp-catalog :4201 + mcp-promotions :4202 + mcp-account :4203
                          # + MCP Inspector web UI on http://127.0.0.1:6274 (opens in your browser)
 </code></pre>
 <p>No assistant, web app or AI model is needed. In the Inspector:</p>
@@ -294,6 +361,10 @@ npm run mcp:standalone   # catalog :4002 + inventory :4003 + promotion :4006 (wh
 <li><strong>Prompts</strong> tab → <code>compare_products</code>.</li>
 <li>The right-hand <strong>Messages</strong> panel shows every JSON-RPC message (<code>initialize</code>, <code>tools/list</code>, <code>tools/call</code>…). This is the protocol itself.</li>
 <li>Toggle <strong>promotions</strong> on and try <code>check_promo_code</code> with <code>GOLD15</code>: you get &quot;log in to use&quot;, because it only sees public promotions.</li>
+<li>Toggle <strong>account</strong> on and call <code>get_my_orders</code>: <code>AUTH_REQUIRED</code> (no user token). To act as a user, get a dev token and pass it as a header with the CLI:<pre><code class="language-bash">TOKEN=$(curl -s localhost:4001/dev/login-as -H &#39;content-type: application/json&#39; -d &#39;{&quot;customerId&quot;:2}&#39; | jq -r .token)
+npm run mcp:cli -- --server account --method tools/call --tool-name get_my_orders --header &quot;Authorization: Bearer $TOKEN&quot;
+</code></pre>
+</li>
 </ol>
 <p>The Inspector prints a URL with a one-time <code>MCP_INSPECTOR_API_TOKEN</code>; it protects the Inspector&#39;s own local proxy. Set <code>MCP_AUTO_OPEN_ENABLED=false</code> to stop it opening a browser tab.</p>
 <h3>All MCP scripts</h3>
@@ -306,22 +377,22 @@ npm run mcp:standalone   # catalog :4002 + inventory :4003 + promotion :4006 (wh
 </thead>
 <tbody><tr>
 <td><code>npm run mcp:standalone</code></td>
-<td>The three REST services + both MCP servers + Inspector web UI, in one terminal</td>
+<td>Those REST services + all three MCP servers + Inspector web UI, in one terminal</td>
 </tr>
 <tr>
 <td><code>npm run mcp:deps</code></td>
-<td>Only the three REST services (catalog, inventory, promotion)</td>
+<td>Only the REST services the MCP servers call (customer, catalog, inventory, order, promotion, marketing)</td>
 </tr>
 <tr>
 <td><code>npm run dev:mcp</code></td>
-<td>Only the two MCP servers (also part of <code>npm run dev</code>)</td>
+<td>Only the three MCP servers (also part of <code>npm run dev</code>)</td>
 </tr>
 <tr>
 <td><code>npm run mcp:inspector</code></td>
-<td>Inspector web UI with both servers (<code>scripts/mcp/inspector.json</code>)</td>
+<td>Inspector web UI with all three servers (<code>scripts/mcp/inspector.json</code>)</td>
 </tr>
 <tr>
-<td><code>npm run mcp:inspect:catalog</code> / <code>mcp:inspect:promotions</code></td>
+<td><code>npm run mcp:inspect:catalog</code> / <code>:promotions</code> / <code>:account</code></td>
 <td>Inspector web UI connected to one server</td>
 </tr>
 <tr>
@@ -334,7 +405,7 @@ npm run mcp:standalone   # catalog :4002 + inventory :4003 + promotion :4006 (wh
 </tr>
 <tr>
 <td><code>npm run smoke:mcp</code></td>
-<td>19 automated checks with the official MCP client</td>
+<td>27 automated checks with the official MCP client (direct, and through the gateway)</td>
 </tr>
 </tbody></table>
 <h3>With the full app</h3>
@@ -392,8 +463,16 @@ npm run mcp:standalone   # catalog :4002 + inventory :4003 + promotion :4006 (wh
 </tr>
 </thead>
 <tbody><tr>
-<td>Public data only on MCP</td>
-<td>Shared connections can&#39;t carry per-user identity; private tools use <code>RunContext</code></td>
+<td>AI app reaches the store only via MCP (+ its own RAG)</td>
+<td>The store is another team&#39;s system; MCP through the gateway is the published contract</td>
+</tr>
+<tr>
+<td>Per-user data via a per-request MCP connection with the user&#39;s JWT</td>
+<td>Shared connections have fixed headers; the store verifies the token on every call</td>
+</tr>
+<tr>
+<td>Filter tools per agent (<code>toolFilter</code>)</td>
+<td>Discovery from RAG, live checks from MCP: the agent only sees what it should use</td>
 </tr>
 <tr>
 <td>MCP servers call APIs, never databases</td>
@@ -416,8 +495,8 @@ npm run mcp:standalone   # catalog :4002 + inventory :4003 + promotion :4006 (wh
 <td>Reviews are user-written and could contain &quot;ignore your rules…&quot;. <code>get_reviews</code> labels them as quoted opinions, and the agent&#39;s instructions forbid following instructions inside tool results. Phase 8 adds MCP <strong>tool output guardrails</strong> (<code>toolOutputGuardrails</code> on <code>MCPServerStreamableHttp</code>) to scan for injection.</td>
 </tr>
 <tr>
-<td>Internal-only network + optional token</td>
-<td>On Azure the MCP servers get <strong>internal ingress</strong> only; <code>MCP_AUTH_TOKEN</code> comes from Key Vault</td>
+<td>Gateway in front, <code>x-mcp-key</code> behind it</td>
+<td>Only the gateway is public; MCP servers have <strong>internal ingress</strong> on Azure and require the gateway&#39;s <code>x-mcp-key</code> (<code>MCP_AUTH_TOKEN</code> from Key Vault)</td>
 </tr>
 <tr>
 <td>Localhost bind in dev</td>
@@ -457,8 +536,12 @@ npm run mcp:standalone   # catalog :4002 + inventory :4003 + promotion :4006 (wh
 <td>An MCP server is already running (maybe from an earlier terminal) → <code>lsof -nP -iTCP:4201 -sTCP:LISTEN</code></td>
 </tr>
 <tr>
-<td><code>401 Unauthorized</code></td>
-<td><code>MCP_AUTH_TOKEN</code> is set on the server; send the same token from the client</td>
+<td><code>401 Unauthorized (missing x-mcp-key)</code></td>
+<td><code>MCP_AUTH_TOKEN</code> is set on the server; call it through the gateway (<code>/mcp/&lt;name&gt;</code>), or send <code>x-mcp-key</code></td>
+</tr>
+<tr>
+<td>Account tools always say <code>AUTH_REQUIRED</code></td>
+<td>No/expired user JWT in <code>Authorization</code>; log in again</td>
 </tr>
 </tbody></table>
 <h2>9. Cheat sheet</h2>

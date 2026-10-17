@@ -92,6 +92,11 @@ blockquote{margin:16px 0;padding:8px 16px;border-left:4px solid var(--accent);ba
 <td><code>@tf/mcp-promotions</code>: MCP server over the promotion REST API (public promotions only), no database</td>
 </tr>
 <tr>
+<td>mcp-account</td>
+<td>4203</td>
+<td><code>@tf/mcp-account</code>: per-user MCP server (user JWT in <code>Authorization</code>) over order/customer/promotion APIs, no database</td>
+</tr>
+<tr>
 <td>web (storefront + admin)</td>
 <td>5173</td>
 <td><code>@tf/web</code>: <strong>Next.js 16</strong>. <code>app/api/[...path]</code> route handler proxies to the gateway and adds the cookie token.</td>
@@ -480,8 +485,43 @@ returns:   delivered ──► partially_returned / returned   (refund + restock
 </tr>
 </tbody></table>
 <p><code>GET /api/chat/:conversationId/messages</code> returns the conversation history <code>{ role: &#39;user&#39; | &#39;assistant&#39;, text }[]</code>, which lets the UI restore a conversation after login.</p>
+<h2>AI app ↔ store boundary (the most important rule)</h2>
+<p>The assistant is a <strong>separate application</strong> owned by another team. It reaches the store <strong>only through MCP</strong>, published by the store&#39;s public gateway at <code>/mcp/&lt;name&gt;</code>, plus its <strong>own RAG indexes</strong> (Azure AI Search). It makes <strong>no</strong> calls to store service APIs (<code>services/assistant</code> has no <code>services.*</code> calls).</p>
+<table>
+<thead>
+<tr>
+<th>Need</th>
+<th>Source</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Find/list/compare products, specs</td>
+<td>RAG <code>search_catalog</code> (<code>tf-products</code>)</td>
+</tr>
+<tr>
+<td>Policies, guides, FAQs</td>
+<td>RAG <code>search_knowledge</code> (<code>tf-knowledge</code>)</td>
+</tr>
+<tr>
+<td>Live stock / exact price / reviews</td>
+<td>MCP catalog, filtered to <code>get_product</code>, <code>check_stock</code>, <code>get_reviews</code></td>
+</tr>
+<tr>
+<td>Public promotions, code checks</td>
+<td>MCP promotions</td>
+</tr>
+<tr>
+<td>The user&#39;s orders, offers, profile, return eligibility</td>
+<td>MCP account, per-request connection with the user&#39;s JWT</td>
+</tr>
+</tbody></table>
 <h2>MCP servers</h2>
-<p>Both are built on <code>@tf/mcp-kit</code> (<code>packages/mcp-kit</code>): Streamable HTTP at <code>POST /mcp</code>, <strong>stateless</strong> (a new server per request, so any replica can answer), <code>/healthz</code>, optional <code>Authorization: Bearer $MCP_AUTH_TOKEN</code>, bound to <code>127.0.0.1</code> locally (DNS-rebinding protection) or <code>MCP_HOST=0.0.0.0</code> in containers. They call service REST APIs; they never read a database.</p>
+<p>All are built on <code>@tf/mcp-kit</code> (<code>packages/mcp-kit</code>): Streamable HTTP at <code>POST /mcp</code>, <strong>stateless</strong> (a new server per request), <code>/healthz</code>, bound to <code>127.0.0.1</code> locally (DNS-rebinding protection) or <code>MCP_HOST=0.0.0.0</code> in containers. Two headers:</p>
+<ul>
+<li><code>Authorization: Bearer &lt;user JWT&gt;</code> → <code>buildServer({ userToken })</code> (per-user tools; services verify it);</li>
+<li><code>x-mcp-key: $MCP_AUTH_TOKEN</code> → required when set, added by the gateway, so only the gateway can reach the servers.</li>
+</ul>
+<p>They call service REST APIs (they belong to the e-commerce side); they never read a database.</p>
 <table>
 <thead>
 <tr>
@@ -492,27 +532,35 @@ returns:   delivered ──► partially_returned / returned   (refund + restock
 </tr>
 </thead>
 <tbody><tr>
-<td><strong>mcp-catalog</strong> <code>:4201/mcp</code></td>
-<td><code>search_products</code> (query, category, brand, price range, inStockOnly, sort, limit) · <code>get_product</code> (slug) · <code>check_stock</code> (slug, size?, color?; returns <code>structuredContent</code>) · <code>get_reviews</code> (slug, limit) · <code>list_categories</code></td>
+<td><strong>mcp-catalog</strong> <code>:4201</code></td>
+<td><code>search_products</code> · <code>get_product</code> · <code>check_stock</code> (<code>structuredContent</code>) · <code>get_reviews</code> · <code>list_categories</code></td>
 <td><code>catalog://categories</code> · template <code>catalog://products/{slug}</code></td>
-<td><code>compare_products</code> (slugs, useCase?)</td>
+<td><code>compare_products</code></td>
 </tr>
 <tr>
-<td><strong>mcp-promotions</strong> <code>:4202/mcp</code></td>
-<td><code>list_public_promotions</code> (category?) · <code>check_promo_code</code> (code, subtotalDollars, categories) · <code>get_promotion_terms</code> (code)</td>
+<td><strong>mcp-promotions</strong> <code>:4202</code></td>
+<td><code>list_public_promotions</code> · <code>check_promo_code</code> · <code>get_promotion_terms</code></td>
 <td><code>promotions://active</code></td>
-<td><code>find_best_deal</code> (shoppingList)</td>
+<td><code>find_best_deal</code></td>
+</tr>
+<tr>
+<td><strong>mcp-account</strong> <code>:4203</code></td>
+<td><code>get_my_profile</code> · <code>get_my_orders</code> · <code>get_order_details</code> · <code>get_my_offers</code> · <code>check_return_eligibility</code> (dry run). Guests → <code>AUTH_REQUIRED</code></td>
+<td></td>
+<td></td>
 </tr>
 </tbody></table>
-<p><strong>How the assistant uses them</strong> (<code>services/assistant/src/mcp.ts</code>, <code>agent.ts</code>):</p>
+<p><strong>Gateway</strong> (<code>services/gateway</code>): <code>ALL /mcp/:server</code> (<code>catalog</code>, <code>promotions</code>, <code>account</code>) → internal <code>MCP_*_URL</code>; passes <code>content-type</code>, <code>accept</code>, <code>authorization</code>, MCP protocol headers; adds <code>x-mcp-key</code>; streams the response.</p>
+<p><strong>Assistant</strong> (<code>services/assistant/src/mcp.ts</code>, <code>agent.ts</code>, <code>rag.ts</code>):</p>
 <ul>
-<li><code>connectMcpServers([...], { dropFailed: true })</code> at startup; failed servers are retried every 30 s.</li>
-<li>The agent is built per chat request with <code>mcpServers: &lt;connected servers&gt;</code> + private function tools (<code>get_my_orders</code>, <code>get_order_details</code>, <code>get_my_offers</code>, <code>get_my_profile</code>).</li>
-<li>If a server is down, its fallback function tools are added instead (<code>search_products</code>, <code>get_product_details</code>, <code>get_public_promotions</code>), so names never clash.</li>
-<li><strong>Rule:</strong> public data via MCP; per-user data via function tools (MCP connections have fixed headers and can&#39;t carry each user&#39;s JWT). mcp-promotions calls the promotion API anonymously, so member-only offers can&#39;t leak through it.</li>
-<li><code>GET /api/admin/assistant/status</code> → <code>{ model, provider: { requested, chat, chatModel, embeddings, embeddingModel, tracing, problems }, mcp: [{ name, connected, tools[] }] }</code>.</li>
+<li>Shared connections (opened once, <code>dropFailed</code>, 30 s retry) to <code>STORE_MCP_BASE_URL/catalog</code> (tool filter: <code>get_product</code>, <code>check_stock</code>, <code>get_reviews</code>) and <code>/promotions</code>.</li>
+<li>Per chat request: a new <code>account</code> connection with <code>Authorization: Bearer &lt;user JWT&gt;</code> (none for guests), closed after the run.</li>
+<li>Local tools: only <code>search_catalog</code>, <code>search_knowledge</code> (RAG). When search isn&#39;t configured they return <code>SEARCH_UNAVAILABLE</code>.</li>
+<li>A tool output containing <code>AUTH_REQUIRED</code> → one <code>auth_required</code> SSE event. When a guest conversation is adopted at login, a system note is added to that turn.</li>
+<li><code>GET /api/admin/assistant/status</code> → <code>{ model, provider{…}, rag{ configured, endpoint, indexes, embeddings }, mcp: [{ name, connected, tools[], agentTools[] }] }</code>.</li>
+<li><strong>Approvals:</strong> the assistant lists only its own paused runs (<code>run-*</code>); the gateway composes <code>/api/admin/approvals</code> from order-service refunds (<code>return-*</code>) + assistant runs, and routes decisions to the owner.</li>
 </ul>
-<p>Checks: <code>npm run smoke:mcp</code> (19 read-only checks). Standalone: <code>npm run mcp:standalone</code> (catalog + inventory + promotion services, both MCP servers, MCP Inspector web UI with both servers from <code>scripts/mcp/inspector.json</code>). CLI: <code>npm run mcp:cli -- --server catalog --method tools/list</code>.</p>
+<p>Checks: <code>npm run smoke:mcp</code> (27 checks: direct + through the gateway). Standalone: <code>npm run mcp:standalone</code> (the REST services MCP needs + all three MCP servers + MCP Inspector from <code>scripts/mcp/inspector.json</code>). CLI: <code>npm run mcp:cli -- --server catalog --method tools/list</code>.</p>
 <h2>AI provider (<code>packages/shared/src/ai.ts</code>)</h2>
 <p><code>MODEL_PROVIDER=azure|openai|auto</code> (auto: Azure if <code>AZURE_OPENAI_ENDPOINT</code>, else OpenAI if <code>OPENAI_API_KEY</code>). <code>EMBEDDING_PROVIDER</code> defaults to the chat provider; ingest and queries must use the same one. Models: <code>AZURE_OPENAI_CHAT_DEPLOYMENT</code> / <code>OPENAI_CHAT_MODEL</code>, <code>AZURE_OPENAI_EMBEDDING_DEPLOYMENT</code> / <code>OPENAI_EMBEDDING_MODEL</code>. Tracing to the OpenAI dashboard only when <code>OPENAI_AGENTS_DISABLE_TRACING=false</code> and <code>OPENAI_API_KEY</code> is set.</p>
 <h2>Seed source data formats</h2>

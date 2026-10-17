@@ -5,7 +5,7 @@
 
 ## 1. The big idea in one minute
 
-TrailForge is **one Git repository that holds 15 small Node.js packages** (services, apps, shared libraries, scripts). This setup is called a **monorepo**. Two features make it work:
+TrailForge is **one Git repository that holds 18 small Node.js packages** (services, apps, shared libraries, scripts). This setup is called a **monorepo**. Two features make it work:
 
 1. **npm workspaces**: npm treats every folder matched by the `workspaces` patterns as a package. One `npm install` at the root installs everything, and packages can import each other by name (`import { createService } from '@tf/shared'`) **without publishing anything to npm**.
 2. **TypeScript project references**: `tsc -b` type-checks and builds the backend packages in the right order (shared first, then the services that use it).
@@ -29,12 +29,13 @@ trailforge/                       ← the "root" (workspace root). You run comma
 "workspaces": ["packages/*", "services/*", "apps/*", "scripts/*"]
 ```
 
-Each pattern means "every direct sub-folder that has a `package.json` is a package". Today that's 15:
+Each pattern means "every direct sub-folder that has a `package.json` is a package". Today that's 18:
 
 | Folder | Package name | What it is | Runs with |
 |---|---|---|---|
 | `packages/shared` | `@tf/shared` | Backend library: config, db, migrations, auth, HTTP helpers, service client, pricing, policy constants | imported by others; never runs alone |
 | `packages/chat-ui` | `@tf/chat-ui` | React chat components (`ChatWidget`, `ChatPage`, `useChat`) | imported by both front-ends |
+| `packages/mcp-kit` | `@tf/mcp-kit` | Shared MCP host (Streamable HTTP) + result helpers | imported by the MCP servers |
 | `services/gateway` | `@tf/gateway` | Express BFF, port 3000 | `tsx watch` |
 | `services/customer` | `@tf/customer` | Express, 4001, db `tf_customer` | `tsx watch` |
 | `services/catalog` | `@tf/catalog` | Express, 4002 | `tsx watch` |
@@ -44,6 +45,8 @@ Each pattern means "every direct sub-folder that has a `package.json` is a packa
 | `services/promotion` | `@tf/promotion` | Express, 4006 | `tsx watch` |
 | `services/marketing` | `@tf/marketing` | Express, 4007 | `tsx watch` |
 | `services/assistant` | `@tf/assistant` | Express + OpenAI Agents SDK, 4100 | `tsx watch` |
+| `services/mcp-catalog` | `@tf/mcp-catalog` | MCP server over the catalog API, 4201 | `tsx watch` |
+| `services/mcp-promotions` | `@tf/mcp-promotions` | MCP server over the promotion API, 4202 | `tsx watch` |
 | `apps/web` | `@tf/web` | Next.js 16 storefront + admin, 5173 | `next dev` |
 | `apps/chat` | `@tf/chat` | React + Vite full-screen chat, 5174 | `vite` |
 | `scripts/db` | `@tf/db-scripts` | reset / migrate / seed | `tsx` (one-off) |
@@ -151,9 +154,11 @@ npm run typecheck -w @tf/chat-ui
 | `npm run db:reset` | Drop + recreate all 8 databases, migrate, seed (destructive) |
 | `npm run db:migrate` | Apply pending SQL migrations only (safe) |
 | `npm run db:seed` | Re-seed without dropping databases |
-| `npm run dev` | **Everything**: 8 services + assistant + web + chat |
+| `npm run dev` | **Everything**: 8 services + 2 MCP servers + assistant + web + chat |
 | `npm run dev:services` | Only the 7 domain services + gateway |
+| `npm run dev:mcp` | The two MCP servers |
 | `npm run dev:assistant` / `dev:web` / `dev:chat` | One part |
+| `npm run smoke:mcp` / `mcp:inspector` | Test the MCP servers / open the MCP Inspector UI |
 | `npm run typecheck` | `tsc -b` over all backend packages |
 | `npm run rag:prepare` / `rag:ingest` | RAG data pipeline |
 | `npm run research:html` | Re-render `research/*.md` to HTML |
@@ -170,6 +175,8 @@ npm run dev
      │        ├─ npm run dev -w @tf/catalog    → …                          :4002
      │        ├─ …inventory, order, payment, promotion, marketing           :4003–4007
      │        └─ npm run dev -w @tf/gateway                                 :3000
+     ├─ npm run dev:mcp
+     │    └─ concurrently: mcp-catalog :4201 · mcp-promotions :4202
      ├─ npm run dev:assistant                                               :4100
      ├─ npm run dev:web    → next dev -p 5173
      └─ npm run dev:chat   → vite --port 5174

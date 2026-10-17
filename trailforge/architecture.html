@@ -15,7 +15,7 @@ pre{background:var(--code);border:1px solid var(--line);border-radius:8px;paddin
 table{border-collapse:collapse;width:100%;font-size:14.5px;display:block;overflow-x:auto}th,td{border:1px solid var(--line);padding:7px 10px;text-align:left;vertical-align:top}th{background:var(--soft)}
 blockquote{margin:16px 0;padding:8px 16px;border-left:4px solid var(--accent);background:var(--soft);border-radius:0 8px 8px 0}
 @media (max-width:760px){.wrap{grid-template-columns:1fr}nav{position:static;height:auto;border-right:0;border-bottom:1px solid var(--line)}main{padding:24px 16px 80px}}
-</style></head><body><div class="wrap"><nav><a href="../" class="hub-link">← All readings</a><b>TrailForge research</b><a href="application-context.html" class="">TrailForge: Application Context</a><a href="architecture.html" class="on">TrailForge: Architecture & Contracts</a><a href="deployment-plan.html" class="">TrailForge: Deployment Plan</a><a href="implementation-plan.html" class="">TrailForge: Implementation Plan</a><a href="monorepo-guide.html" class="">Monorepo Guide: How the TrailForge Workspace Works</a></nav><main><h1>TrailForge: Architecture &amp; Contracts</h1>
+</style></head><body><div class="wrap"><nav><a href="../" class="hub-link">← All readings</a><b>TrailForge research</b><a href="application-context.html" class="">TrailForge: Application Context</a><a href="architecture.html" class="on">TrailForge: Architecture & Contracts</a><a href="deployment-plan.html" class="">TrailForge: Deployment Plan</a><a href="implementation-plan.html" class="">TrailForge: Implementation Plan</a><a href="mcp-guide.html" class="">MCP Guide: TrailForge's MCP Servers</a><a href="monorepo-guide.html" class="">Monorepo Guide: How the TrailForge Workspace Works</a></nav><main><h1>TrailForge: Architecture &amp; Contracts</h1>
 <p>This is the source of truth for ports, data shapes and the public API. Frontend, services and the assistant all build against it.</p>
 <h2>Ports</h2>
 <table>
@@ -80,6 +80,16 @@ blockquote{margin:16px 0;padding:8px 16px;border-left:4px solid var(--accent);ba
 <td>assistant</td>
 <td>4100</td>
 <td><code>@tf/assistant</code> → db <code>tf_assistant</code></td>
+</tr>
+<tr>
+<td>mcp-catalog</td>
+<td>4201</td>
+<td><code>@tf/mcp-catalog</code>: MCP server (Streamable HTTP, stateless) over the catalog REST API, no database</td>
+</tr>
+<tr>
+<td>mcp-promotions</td>
+<td>4202</td>
+<td><code>@tf/mcp-promotions</code>: MCP server over the promotion REST API (public promotions only), no database</td>
 </tr>
 <tr>
 <td>web (storefront + admin)</td>
@@ -470,6 +480,39 @@ returns:   delivered ──► partially_returned / returned   (refund + restock
 </tr>
 </tbody></table>
 <p><code>GET /api/chat/:conversationId/messages</code> returns the conversation history <code>{ role: &#39;user&#39; | &#39;assistant&#39;, text }[]</code>, which lets the UI restore a conversation after login.</p>
+<h2>MCP servers</h2>
+<p>Both are built on <code>@tf/mcp-kit</code> (<code>packages/mcp-kit</code>): Streamable HTTP at <code>POST /mcp</code>, <strong>stateless</strong> (a new server per request, so any replica can answer), <code>/healthz</code>, optional <code>Authorization: Bearer $MCP_AUTH_TOKEN</code>, bound to <code>127.0.0.1</code> locally (DNS-rebinding protection) or <code>MCP_HOST=0.0.0.0</code> in containers. They call service REST APIs; they never read a database.</p>
+<table>
+<thead>
+<tr>
+<th>Server</th>
+<th>Tools</th>
+<th>Resources</th>
+<th>Prompts</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>mcp-catalog</strong> <code>:4201/mcp</code></td>
+<td><code>search_products</code> (query, category, brand, price range, inStockOnly, sort, limit) · <code>get_product</code> (slug) · <code>check_stock</code> (slug, size?, color?; returns <code>structuredContent</code>) · <code>get_reviews</code> (slug, limit) · <code>list_categories</code></td>
+<td><code>catalog://categories</code> · template <code>catalog://products/{slug}</code></td>
+<td><code>compare_products</code> (slugs, useCase?)</td>
+</tr>
+<tr>
+<td><strong>mcp-promotions</strong> <code>:4202/mcp</code></td>
+<td><code>list_public_promotions</code> (category?) · <code>check_promo_code</code> (code, subtotalDollars, categories) · <code>get_promotion_terms</code> (code)</td>
+<td><code>promotions://active</code></td>
+<td><code>find_best_deal</code> (shoppingList)</td>
+</tr>
+</tbody></table>
+<p><strong>How the assistant uses them</strong> (<code>services/assistant/src/mcp.ts</code>, <code>agent.ts</code>):</p>
+<ul>
+<li><code>connectMcpServers([...], { dropFailed: true })</code> at startup; failed servers are retried every 30 s.</li>
+<li>The agent is built per chat request with <code>mcpServers: &lt;connected servers&gt;</code> + private function tools (<code>get_my_orders</code>, <code>get_order_details</code>, <code>get_my_offers</code>, <code>get_my_profile</code>).</li>
+<li>If a server is down, its fallback function tools are added instead (<code>search_products</code>, <code>get_product_details</code>, <code>get_public_promotions</code>), so names never clash.</li>
+<li><strong>Rule:</strong> public data via MCP; per-user data via function tools (MCP connections have fixed headers and can&#39;t carry each user&#39;s JWT). mcp-promotions calls the promotion API anonymously, so member-only offers can&#39;t leak through it.</li>
+<li><code>GET /api/admin/assistant/status</code> → <code>{ model, mcp: [{ name, connected, tools[] }] }</code>.</li>
+</ul>
+<p>Checks: <code>npm run smoke:mcp</code> (19 read-only checks); <code>npm run mcp:inspector</code> for a UI.</p>
 <h2>Seed source data formats</h2>
 <p><code>data/products.json</code>:</p>
 <pre><code class="language-jsonc">{

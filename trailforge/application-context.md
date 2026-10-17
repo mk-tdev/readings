@@ -123,7 +123,7 @@ Key rules:
   - climbing gear is non-returnable;
   - refunds ≤ $100 are approved automatically.
 
-Full contracts (ports, every endpoint, SSE events, data shapes) are in **`research/architecture.md`**. The plan and phases are in **`research/implementation-plan.md`**.
+Full contracts (ports, every endpoint, SSE events, data shapes) are in **`research/architecture.md`**. How the workspace runs: **`research/monorepo-guide.md`**. MCP servers: **`research/mcp-guide.md`**. The plan and phases are in **`research/implementation-plan.md`**.
 
 ## 7. Repository map
 
@@ -132,7 +132,8 @@ packages/shared     config, db (pool/one/many/tx), migrate, auth, http (createSe
                     service client, pricing (priceOrder), segments (segmentsFor/tierFor), types
 packages/chat-ui    ChatWidget, ChatPanel, ChatPage, useChat, SSE parser, styles (tfc- prefix)
 services/<name>     src/index.ts (Express) + migrations/*.sql
-services/assistant  src/agent.ts, context.ts, session.ts (PostgresSession), tools/public.ts, tools/private.ts
+services/mcp-*      MCP servers (catalog :4201, promotions :4202) on packages/mcp-kit
+services/assistant  src/agent.ts, mcp.ts, context.ts, session.ts (PostgresSession), tools/public.ts, tools/private.ts
 apps/web            Next.js: app/, components/, lib/gateway.ts (server-only), proxy.ts, app/api/session, app/api/[...path]
 apps/chat           Vite React full-screen chat
 data/               products.json (114 products, 527 variants), promotions.json (13 promos)
@@ -140,7 +141,7 @@ rag/knowledge/      47 handwritten docs (policies, privacy, about, stores, guide
 rag/products/       114 generated product docs (npm run rag:prepare)
 scripts/db          reset.ts, migrate.ts, seed.ts      scripts/rag   prepare.ts, ingest.ts
 scripts/smoke       api-smoke.mjs (21 end-to-end API checks)
-research/           application-context.md (this file), implementation-plan.md, architecture.md (+ .html)
+research/           application-context.md (this file), implementation-plan.md, architecture.md, deployment-plan.md, monorepo-guide.md, mcp-guide.md (+ .html)
 ```
 
 ## 8. Commands & test data
@@ -172,7 +173,7 @@ Full checklist per phase: **`research/implementation-plan.md` §12**. Deployment
 | 2. Microservices + seed | ✅ |
 | 3. Next.js storefront, admin console, auth, order stages | ✅ |
 | 4. Azure AI foundation + RAG data/ingest/eval | 🟡 docs + scripts done · 🔒 Azure not provisioned |
-| 5. Assistant core (search tools, MCP, streaming) | 🟡 skeleton done |
+| 5. Assistant core (search tools, MCP, streaming) | 🟡 MCP servers (catalog, promotions) done; search tools need Azure |
 | 6. Login-aware chat & memory | 🟡 built, needs live-model test |
 | 7. Multi-agent (handoffs, agents as tools, structured output) | ⬜ |
 | 8. Guardrails & safety (8a deterministic can start now) | ⬜ |
@@ -184,7 +185,9 @@ Full checklist per phase: **`research/implementation-plan.md` §12**. Deployment
 **Blockers / next steps:**
 1. Provision Azure OpenAI (`gpt-5-mini`, `text-embedding-3-small`) and Azure AI Search, then fill `AZURE_OPENAI_ENDPOINT` and `AZURE_SEARCH_ENDPOINT` in `.env`. Keys are optional: Entra ID via `az login` works.
 2. `npm run rag:ingest`, then add a `search_knowledge` tool (hybrid search with citations) to the assistant.
-3. Phase 5: MCP servers for catalog + promotions. Phase 7: Concierge + specialist agents with handoffs and guardrails.
+3. Phase 7: Concierge + specialist agents with handoffs; Phase 8a: deterministic guardrails (can start without Azure).
+
+MCP servers (catalog, promotions) are built and connected. See `research/mcp-guide.md`.
 
 **Known gaps:**
 - Token-by-token chat streaming isn't proven yet (no model is connected).

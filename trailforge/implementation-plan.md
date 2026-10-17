@@ -3,7 +3,7 @@
 > A full-stack outdoor & hiking gear store built as microservices, with an agentic AI assistant made only with the **OpenAI Agents SDK (JS)**, with no orchestration framework. Learning project: every concept is implemented "raw" so you can see how it works.
 >
 > **Status legend:** ✅ done · 🟡 in progress / partly done · ⬜ not started · 🔒 blocked (needs Azure)
-> **Last updated:** 2026-10-17 · See also [Deployment Plan](deployment-plan.md), [Architecture & Contracts](architecture.md), [Application Context](application-context.md)
+> **Last updated:** 2026-10-17 · See also [Deployment Plan](deployment-plan.md), [Architecture & Contracts](architecture.md), [Application Context](application-context.md), [Monorepo Guide](monorepo-guide.md), [MCP Guide](mcp-guide.md)
 
 ## 1. Goals
 
@@ -64,6 +64,7 @@ trailforge/
 ├── docker-compose.yml        # local postgres + pgadmin
 ├── packages/
 │   ├── shared/               # config, db pool, migrations, http helpers, auth, service client, pricing, segments, policy constants
+│   ├── mcp-kit/              # shared MCP host (Streamable HTTP, stateless) + result helpers
 │   └── chat-ui/              # React chat components: <ChatWidget/> and <ChatPage/>
 ├── services/
 │   ├── gateway/              # BFF :3000
@@ -74,7 +75,9 @@ trailforge/
 │   ├── payment/              # simulated payment provider: charges + refunds
 │   ├── promotion/            # promotions, rules, eligibility, redemptions
 │   ├── marketing/            # segments, campaigns, messages (inbox)
-│   └── assistant/            # OpenAI Agents SDK: agents, tools, guardrails, workflows, sessions
+│   ├── assistant/            # OpenAI Agents SDK: agents, tools, guardrails, workflows, sessions
+│   ├── mcp-catalog/          # MCP server :4201 over the catalog API (public)
+│   └── mcp-promotions/       # MCP server :4202 over the promotion API (public promotions)
 ├── apps/
 │   ├── web/                  # Next.js 16 (App Router) storefront + admin console  → Vercel
 │   └── chat/                 # React + Vite standalone full-screen chat app        → Azure Static Web Apps
@@ -175,7 +178,7 @@ Streaming caveat: output guardrails run after the full answer, so high-stakes an
 | Sessions (custom Postgres session) | Chat memory survives restarts and login | ✅ |
 | Streaming events → SSE | Text deltas, tool calls, auth prompts | ✅ (handoff events in Phase 7) |
 | `isEnabled` on tools | Admin-only tools hidden from customers | ⬜ Phase 7 |
-| MCP servers (Streamable HTTP), tool filter, cache | catalog / promotion MCP | ⬜ Phase 5 |
+| MCP servers (Streamable HTTP), `connectMcpServers`, tool cache | catalog / promotion MCP | ✅ (tool filters + MCP tool guardrails in Phase 8) |
 | Agents as tools (`asTool`) | Product Expert used from Deals | ⬜ Phase 7 |
 | Handoffs (`handoff()`, inputFilter, onHandoff, inputType) | Concierge → specialists | ⬜ Phase 7 |
 | Structured output (`outputType`) | Classifiers, refund decision, ranked offers, campaign draft | ⬜ Phases 7–9 |
@@ -208,7 +211,7 @@ Streaming caveat: output guardrails run after the full answer, so high-stakes an
 | 2 | Microservices REST APIs + seed (30 users, 100 orders) | Queryable data, smoke-tested | ✅ |
 | 3 | Next.js storefront, admin console, auth, order stages | Working shop + admin | ✅ |
 | 4 | Azure AI foundation + RAG data, ingest & eval set | Search returns good results | 🟡 docs + scripts done · 🔒 Azure |
-| 5 | Assistant core: search tools, MCP servers, streaming chat | Pre-login Q&A with citations | 🟡 skeleton done · 🔒 Azure |
+| 5 | Assistant core: search tools, MCP servers, streaming chat | Pre-login Q&A with citations | 🟡 MCP servers done · search tools 🔒 Azure |
 | 6 | Login-aware chat & memory | Pre/post-login chat | 🟡 built · 🔒 needs live-model test |
 | 7 | Multi-agent: handoffs, agents as tools, structured output | Specialist agents | ⬜ |
 | 8 | Guardrails & safety | Layered protection + red-team eval | ⬜ (8a can start now) |
@@ -248,11 +251,13 @@ Streaming caveat: output guardrails run after the full answer, so high-stakes an
 - [ ] RAG eval set: ~30 questions with expected source docs; report hit@3
 
 ### Phase 5: Assistant core 🟡
-- [x] Assistant service: one agent, 7 tools, Postgres session, SSE protocol, gateway proxy
+- [x] Assistant service: one agent, private function tools + MCP tools, Postgres session, SSE protocol, gateway proxy
 - [x] Chat widget in the store + full-screen chat app
 - [ ] `search_knowledge` tool (hybrid search + semantic ranker, citations `[source#chunk]`)
 - [ ] `search_products` on `tf-products` with filters (category, price, tags) + live stock/price check
-- [ ] MCP servers for catalog + public promotions (Streamable HTTP), connected with `connectMcpServers`
+- [x] MCP servers `mcp-catalog` (5 tools, resource + template, prompt) and `mcp-promotions` (3 tools, resource, prompt) on a shared `@tf/mcp-kit` host (Streamable HTTP, stateless)
+- [x] Assistant connects with `connectMcpServers` (`dropFailed`, 30 s retry); falls back to local function tools when a server is down; `/api/admin/assistant/status`
+- [x] `npm run smoke:mcp` (19 checks) and `npm run mcp:inspector`
 - [ ] 🔒 Verify token-by-token streaming end to end with a live model
 
 ### Phase 6: Login-aware chat & memory 🟡

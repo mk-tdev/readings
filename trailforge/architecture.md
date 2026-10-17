@@ -17,6 +17,8 @@ This is the source of truth for ports, data shapes and the public API. Frontend,
 | promotion | 4006 | `@tf/promotion` → db `tf_promotion` |
 | marketing | 4007 | `@tf/marketing` → db `tf_marketing` |
 | assistant | 4100 | `@tf/assistant` → db `tf_assistant` |
+| mcp-catalog | 4201 | `@tf/mcp-catalog`: MCP server (Streamable HTTP, stateless) over the catalog REST API, no database |
+| mcp-promotions | 4202 | `@tf/mcp-promotions`: MCP server over the promotion REST API (public promotions only), no database |
 | web (storefront + admin) | 5173 | `@tf/web`: **Next.js 16**. `app/api/[...path]` route handler proxies to the gateway and adds the cookie token. |
 | chat (full-screen) | 5174 | `@tf/chat`: **React + Vite**. The Vite dev proxy forwards `/api` → 3000. |
 
@@ -193,6 +195,24 @@ Inventory `on_hand` drops when the reservation is committed at checkout and goes
 | `error` | `{ message }` |
 
 `GET /api/chat/:conversationId/messages` returns the conversation history `{ role: 'user' | 'assistant', text }[]`, which lets the UI restore a conversation after login.
+
+## MCP servers
+
+Both are built on `@tf/mcp-kit` (`packages/mcp-kit`): Streamable HTTP at `POST /mcp`, **stateless** (a new server per request, so any replica can answer), `/healthz`, optional `Authorization: Bearer $MCP_AUTH_TOKEN`, bound to `127.0.0.1` locally (DNS-rebinding protection) or `MCP_HOST=0.0.0.0` in containers. They call service REST APIs; they never read a database.
+
+| Server | Tools | Resources | Prompts |
+|---|---|---|---|
+| **mcp-catalog** `:4201/mcp` | `search_products` (query, category, brand, price range, inStockOnly, sort, limit) · `get_product` (slug) · `check_stock` (slug, size?, color?; returns `structuredContent`) · `get_reviews` (slug, limit) · `list_categories` | `catalog://categories` · template `catalog://products/{slug}` | `compare_products` (slugs, useCase?) |
+| **mcp-promotions** `:4202/mcp` | `list_public_promotions` (category?) · `check_promo_code` (code, subtotalDollars, categories) · `get_promotion_terms` (code) | `promotions://active` | `find_best_deal` (shoppingList) |
+
+**How the assistant uses them** (`services/assistant/src/mcp.ts`, `agent.ts`):
+- `connectMcpServers([...], { dropFailed: true })` at startup; failed servers are retried every 30 s.
+- The agent is built per chat request with `mcpServers: <connected servers>` + private function tools (`get_my_orders`, `get_order_details`, `get_my_offers`, `get_my_profile`).
+- If a server is down, its fallback function tools are added instead (`search_products`, `get_product_details`, `get_public_promotions`), so names never clash.
+- **Rule:** public data via MCP; per-user data via function tools (MCP connections have fixed headers and can't carry each user's JWT). mcp-promotions calls the promotion API anonymously, so member-only offers can't leak through it.
+- `GET /api/admin/assistant/status` → `{ model, mcp: [{ name, connected, tools[] }] }`.
+
+Checks: `npm run smoke:mcp` (19 read-only checks); `npm run mcp:inspector` for a UI.
 
 ## Seed source data formats
 

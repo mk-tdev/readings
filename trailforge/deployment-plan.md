@@ -25,7 +25,7 @@
   │   │   gateway    │──────────────┐                                                        │
   │   └──────────────┘              │ internal ingress only (http://<app-name>)              │
   │     customer · catalog · inventory · order · payment · promotion · marketing             │
-  │     assistant ──► mcp-catalog · mcp-promotions (Phase 5)                                │
+  │     assistant ──► mcp-catalog · mcp-promotions (MCP, Streamable HTTP)                   │
   │     jobs: db-migrate · db-seed (demo) · rag-ingest                                       │
   │                                                                                         │
   │   Azure Database for PostgreSQL Flexible Server (8 databases: tf_customer … tf_assistant)│
@@ -119,6 +119,9 @@ Start with A, then move to B as a learning step. The app code doesn't change, on
 | `PGPASSWORD` | | Key Vault `pg-password` |
 | `JWT_SECRET`, `INTERNAL_TOKEN` | | Key Vault |
 | `CUSTOMER_URL` … `ASSISTANT_URL` | `http://customer`, `http://catalog`, … | plain (internal DNS) |
+| `MCP_CATALOG_URL`, `MCP_PROMOTIONS_URL` | `http://mcp-catalog/mcp`, `http://mcp-promotions/mcp` | plain (assistant) |
+| `MCP_HOST` | `0.0.0.0` | MCP servers (bind for container networking) |
+| `MCP_AUTH_TOKEN` | | Key Vault (assistant + MCP servers) |
 | `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_CHAT_DEPLOYMENT`, `AZURE_OPENAI_EMBEDDING_DEPLOYMENT` | | plain (assistant, ingest job) |
 | `AZURE_SEARCH_ENDPOINT`, `AZURE_SEARCH_*_INDEX` | | plain (assistant, ingest job) |
 | `AZURE_CLIENT_ID` | Managed Identity client id | plain (so `DefaultAzureCredential` picks the right identity) |

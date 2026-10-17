@@ -1,0 +1,418 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MCP Guide: TrailForge's MCP Servers</title>
+<style>
+:root{--bg:#fbfaf7;--fg:#1f2a24;--muted:#5b6b62;--line:#dfe3dc;--accent:#2f6b4f;--code:#f0f2ec;--soft:#eef3ee}
+@media (prefers-color-scheme:dark){:root{--bg:#121714;--fg:#e4ebe6;--muted:#9aa9a0;--line:#2b352f;--accent:#6fbf93;--code:#1b221e;--soft:#18211c}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.65 system-ui,-apple-system,"Segoe UI",sans-serif}
+.wrap{display:grid;grid-template-columns:240px minmax(0,1fr);min-height:100vh}
+nav{border-right:1px solid var(--line);padding:24px 16px;position:sticky;top:0;height:100vh;overflow:auto;background:var(--soft)}
+nav b{display:block;margin-bottom:12px;color:var(--accent)}nav a{display:block;padding:6px 8px;border-radius:6px;color:var(--fg);text-decoration:none;font-size:14px}
+nav a.on,nav a:hover{background:var(--bg);color:var(--accent)}
+main{max-width:900px;padding:40px 40px 100px}h1{font-size:30px;line-height:1.25}h2{margin-top:40px;padding-bottom:6px;border-bottom:1px solid var(--line)}
+a{color:var(--accent)}code{background:var(--code);padding:2px 5px;border-radius:4px;font-size:.88em}
+pre{background:var(--code);border:1px solid var(--line);border-radius:8px;padding:14px;overflow-x:auto;font-size:13px;line-height:1.5}pre code{padding:0;background:none}
+table{border-collapse:collapse;width:100%;font-size:14.5px;display:block;overflow-x:auto}th,td{border:1px solid var(--line);padding:7px 10px;text-align:left;vertical-align:top}th{background:var(--soft)}
+blockquote{margin:16px 0;padding:8px 16px;border-left:4px solid var(--accent);background:var(--soft);border-radius:0 8px 8px 0}
+@media (max-width:760px){.wrap{grid-template-columns:1fr}nav{position:static;height:auto;border-right:0;border-bottom:1px solid var(--line)}main{padding:24px 16px 80px}}
+</style></head><body><div class="wrap"><nav><a href="../" class="hub-link">← All readings</a><b>TrailForge research</b><a href="application-context.html" class="">TrailForge: Application Context</a><a href="architecture.html" class="">TrailForge: Architecture & Contracts</a><a href="deployment-plan.html" class="">TrailForge: Deployment Plan</a><a href="implementation-plan.html" class="">TrailForge: Implementation Plan</a><a href="mcp-guide.html" class="on">MCP Guide: TrailForge's MCP Servers</a><a href="monorepo-guide.html" class="">Monorepo Guide: How the TrailForge Workspace Works</a></nav><main><h1>MCP Guide: TrailForge&#39;s MCP Servers</h1>
+<blockquote>
+<p>How the Model Context Protocol (MCP) works, how TrailForge&#39;s two MCP servers are built, how the assistant uses them, and how to test, extend and connect to them.
+Code: <code>packages/mcp-kit</code>, <code>services/mcp-catalog</code>, <code>services/mcp-promotions</code>, <code>services/assistant/src/mcp.ts</code>.</p>
+</blockquote>
+<h2>1. MCP in one minute</h2>
+<p><strong>MCP</strong> is an open protocol that lets an AI application discover and use capabilities that live in <strong>another process</strong>. It&#39;s like a USB port for AI tools: write a server once, and any MCP client can plug into it (our assistant, Claude Code, VS Code, MCP Inspector…).</p>
+<table>
+<thead>
+<tr>
+<th>Role</th>
+<th>Who in TrailForge</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>Host</strong>: the AI app the user talks to</td>
+<td>The assistant service (<code>services/assistant</code>)</td>
+</tr>
+<tr>
+<td><strong>Client</strong>: the connection inside the host, one per server</td>
+<td><code>MCPServerStreamableHttp</code> from the OpenAI Agents SDK</td>
+</tr>
+<tr>
+<td><strong>Server</strong>: exposes capabilities</td>
+<td><code>mcp-catalog</code>, <code>mcp-promotions</code></td>
+</tr>
+</tbody></table>
+<p>A server offers three kinds of things:</p>
+<table>
+<thead>
+<tr>
+<th>Primitive</th>
+<th>Who decides to use it</th>
+<th>TrailForge examples</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>Tools</strong>: actions the <em>model</em> can call</td>
+<td>The model</td>
+<td><code>search_products</code>, <code>check_stock</code>, <code>check_promo_code</code></td>
+</tr>
+<tr>
+<td><strong>Resources</strong>: data a <em>client app</em> can read</td>
+<td>The application</td>
+<td><code>catalog://categories</code>, <code>catalog://products/{slug}</code>, <code>promotions://active</code></td>
+</tr>
+<tr>
+<td><strong>Prompts</strong>: reusable templates a <em>user</em> picks</td>
+<td>The user</td>
+<td><code>compare_products</code>, <code>find_best_deal</code></td>
+</tr>
+</tbody></table>
+<p>Messages are <strong>JSON-RPC 2.0</strong>. The transport we use is <strong>Streamable HTTP</strong>: the client <code>POST</code>s JSON-RPC to <code>/mcp</code>, and the server answers with JSON or a short Server-Sent-Events stream.</p>
+<h2>2. How it fits into TrailForge</h2>
+<pre><code> browser ─► gateway ─► assistant (MCP host, OpenAI Agents SDK)
+                          │
+                          ├─ MCP client ──POST /mcp──► mcp-catalog    :4201 ──REST──► catalog service   :4002
+                          ├─ MCP client ──POST /mcp──► mcp-promotions :4202 ──REST──► promotion service :4006
+                          │
+                          └─ function tools (private, with the user&#39;s JWT) ──REST──► order · promotion · customer
+</code></pre>
+<p><strong>Public data via MCP, private data via function tools.</strong> This is the key rule:</p>
+<table>
+<thead>
+<tr>
+<th>Data</th>
+<th>Where the tool lives</th>
+<th>Why</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Products, stock, reviews, categories, public promotions</td>
+<td>MCP servers</td>
+<td>Same for everyone; reusable by any MCP client; can scale separately</td>
+</tr>
+<tr>
+<td>My orders, my offers, my profile</td>
+<td>Assistant function tools (<code>tools/private.ts</code>)</td>
+<td>Needs <em>this</em> user&#39;s identity. An MCP connection is created once with fixed headers, so it can&#39;t carry a different user&#39;s JWT on each call. The tool reads the token from the Agents SDK <code>RunContext</code>.</td>
+</tr>
+</tbody></table>
+<p><code>mcp-promotions</code> calls the promotion API <strong>anonymously</strong>, so even if someone talks to it directly it can only see public promotions. Member-only codes answer &quot;Log in to use GOLD15&quot;.</p>
+<p>The MCP servers have <strong>no database</strong>. They&#39;re thin facades over the services&#39; REST APIs, so the &quot;each service owns its data&quot; rule still holds.</p>
+<h2>3. The code</h2>
+<h3>3.1 <code>packages/mcp-kit</code>: the shared host</h3>
+<p><code>startMcpServer({ name, defaultPort, buildServer })</code> gives every MCP server the same plumbing:</p>
+<table>
+<thead>
+<tr>
+<th>Feature</th>
+<th>Detail</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Endpoint</td>
+<td><code>POST /mcp</code> (Streamable HTTP). <code>GET</code>/<code>DELETE /mcp</code> → 405</td>
+</tr>
+<tr>
+<td><strong>Stateless mode</strong></td>
+<td><code>sessionIdGenerator: undefined</code>: a brand-new <code>McpServer</code> + transport per HTTP request, nothing kept in memory. Any replica can answer any call, so it scales horizontally on Azure Container Apps. Trade-off: no server-initiated notifications, which request/response tools don&#39;t need.</td>
+</tr>
+<tr>
+<td>Binding</td>
+<td><code>127.0.0.1</code> by default; the SDK then adds <strong>DNS-rebinding protection</strong> (a malicious web page can&#39;t trick your browser into calling it). In a container set <code>MCP_HOST=0.0.0.0</code>.</td>
+</tr>
+<tr>
+<td>Auth</td>
+<td>Optional shared secret: if <code>MCP_AUTH_TOKEN</code> is set, callers must send <code>Authorization: Bearer &lt;token&gt;</code>. (Public MCP servers would use the spec&#39;s OAuth 2.1 flow; ours are internal-only.)</td>
+</tr>
+<tr>
+<td>Health</td>
+<td><code>GET /healthz</code></td>
+</tr>
+<tr>
+<td>Helpers</td>
+<td><code>text()</code>, <code>json()</code>, <code>toolError()</code>, <code>usd()</code> to build tool results</td>
+</tr>
+</tbody></table>
+<h3>3.2 Anatomy of a tool (<code>services/mcp-catalog/src/index.ts</code>)</h3>
+<pre><code class="language-ts">server.registerTool(
+  &#39;check_stock&#39;,                                   // ① name: what the model calls
+  {
+    title: &#39;Check stock&#39;,
+    description: &#39;Live availability for a product, optionally for a specific size and/or colour. &#39; +
+                 &#39;Use before telling a customer something is available.&#39;,   // ② WHEN to use it
+    inputSchema: {                                 // ③ zod → JSON Schema the model fills in
+      slug: z.string(),
+      size: z.string().optional().describe(&#39;e.g. &quot;M&quot;, &quot;US 10&quot;&#39;),
+      color: z.string().optional(),
+    },
+    outputSchema: { product: z.string(), variants: z.array(/* … */) },  // ④ optional typed output
+    annotations: { readOnlyHint: true, openWorldHint: false },          // ⑤ hints for clients
+  },
+  async ({ slug, size, color }) =&gt; {               // ⑥ handler: validated args in, result out
+    const p = await services.catalog(`/products/${slug}`);  // calls the REST API, not a database
+    // …filter variants…
+    return { ...text(summary), structuredContent: { product: p.name, variants } };
+  },
+);
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Part</th>
+<th>Why it matters</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>① name + ② description</td>
+<td><strong>The description is the prompt.</strong> The model sees only names, descriptions and schemas when choosing tools, so say <em>when</em> to use the tool and what comes back.</td>
+</tr>
+<tr>
+<td>③ <code>inputSchema</code></td>
+<td>Arguments are validated before your code runs; <code>.describe()</code> text helps the model fill them in</td>
+</tr>
+<tr>
+<td>④ <code>outputSchema</code> / <code>structuredContent</code></td>
+<td>Machine-readable result next to the human-readable text (used by <code>check_stock</code>)</td>
+</tr>
+<tr>
+<td>⑤ <code>annotations</code></td>
+<td><code>readOnlyHint</code>, <code>destructiveHint</code>, <code>openWorldHint</code>: hints a host can use (e.g. auto-approve read-only tools)</td>
+</tr>
+<tr>
+<td>Errors</td>
+<td>Return <code>toolError(&#39;…&#39;)</code> (<code>isError: true</code>) for problems the model can fix (&quot;unknown slug, use search_products&quot;). If the handler <strong>throws</strong> (e.g. the catalog service is down), the SDK also turns it into an <code>isError</code> result, so the model sees the message instead of the run crashing.</td>
+</tr>
+</tbody></table>
+<h3>3.3 What each server exposes</h3>
+<p><strong>mcp-catalog</strong> (<code>:4201/mcp</code>)</p>
+<table>
+<thead>
+<tr>
+<th>Tool</th>
+<th>Arguments</th>
+<th>Returns</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>search_products</code></td>
+<td><code>query?</code>, <code>category?</code> (enum of 10), <code>brand?</code>, <code>minPriceDollars?</code>, <code>maxPriceDollars?</code>, <code>inStockOnly</code>, <code>sort</code>, <code>limit</code></td>
+<td>Ranked list with price, rating, stock, slug</td>
+</tr>
+<tr>
+<td><code>get_product</code></td>
+<td><code>slug</code></td>
+<td>Description, highlights, specs, uses, warranty, every variant with live price/stock</td>
+</tr>
+<tr>
+<td><code>check_stock</code></td>
+<td><code>slug</code>, <code>size?</code>, <code>color?</code></td>
+<td>Per-variant availability (+ <code>structuredContent</code>)</td>
+</tr>
+<tr>
+<td><code>get_reviews</code></td>
+<td><code>slug</code>, <code>limit</code></td>
+<td>Average rating + recent reviews, labelled as quoted customer opinions</td>
+</tr>
+<tr>
+<td><code>list_categories</code></td>
+<td>none</td>
+<td>Slug, name, description, product count</td>
+</tr>
+</tbody></table>
+<p>Resources: <code>catalog://categories</code>, and the <strong>resource template</strong> <code>catalog://products/{slug}</code> (one URI pattern → a resource per product). Prompt: <code>compare_products(slugs, useCase?)</code>.</p>
+<p><strong>mcp-promotions</strong> (<code>:4202/mcp</code>)</p>
+<table>
+<thead>
+<tr>
+<th>Tool</th>
+<th>Arguments</th>
+<th>Returns</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>list_public_promotions</code></td>
+<td><code>category?</code></td>
+<td>Code, offer, conditions, end date</td>
+</tr>
+<tr>
+<td><code>check_promo_code</code></td>
+<td><code>code</code>, <code>subtotalDollars</code>, <code>categories[]</code></td>
+<td>Valid + estimated saving, or the exact reason it can&#39;t be used (expired, minimum spend, member-only → log in)</td>
+</tr>
+<tr>
+<td><code>get_promotion_terms</code></td>
+<td><code>code</code></td>
+<td>Full terms of one public code</td>
+</tr>
+</tbody></table>
+<p>Resource: <code>promotions://active</code>. Prompt: <code>find_best_deal(shoppingList)</code>.</p>
+<h3>3.4 The assistant side (<code>services/assistant/src/mcp.ts</code> + <code>agent.ts</code>)</h3>
+<pre><code class="language-ts">mcp = await connectMcpServers(
+  [server(&#39;catalog&#39;, MCP_CATALOG_URL), server(&#39;promotions&#39;, MCP_PROMOTIONS_URL)],
+  { dropFailed: true, connectInParallel: true, connectTimeoutMs: 5000 },
+);
+// per chat request:
+new Agent({ tools: [...privateTools, ...fallbacks], mcpServers: mcp.active, … });
+</code></pre>
+<ul>
+<li><strong><code>dropFailed: true</code>:</strong> a server that&#39;s down is skipped instead of crashing the assistant; failed servers are retried every 30 s, so start-up order doesn&#39;t matter.</li>
+<li><strong><code>cacheToolsList: true</code>:</strong> tools are listed once, not on every agent turn.</li>
+<li><strong>Fallbacks:</strong> if <code>catalog</code> isn&#39;t connected, the local function tools <code>search_products</code> + <code>get_product_details</code> are added; if <code>promotions</code> isn&#39;t, <code>get_public_promotions</code>. Names never clash because a fallback is only added when its MCP server is missing.</li>
+<li>The agent is built <strong>per request</strong> (<code>createAssistant()</code>), so a server that comes back is picked up on the next message.</li>
+<li><code>GET /api/admin/assistant/status</code> (admin) shows <code>{ model, mcp: [{ name, connected, tools[] }] }</code>.</li>
+</ul>
+<h2>4. What happens on the wire</h2>
+<pre><code>client                                    mcp-catalog
+  │  POST /mcp  initialize ─────────────────►│  &quot;I support tools, resources, prompts&quot;
+  │  POST /mcp  tools/list ─────────────────►│  names + descriptions + JSON Schemas
+  │  … the model decides to call a tool …    │
+  │  POST /mcp  tools/call check_stock ─────►│──► GET catalog:4002/products/&lt;slug&gt;
+  │◄──────────── result (content + structuredContent)
+</code></pre>
+<p>Try it with plain <code>curl</code> (both <code>Accept</code> types are required by Streamable HTTP):</p>
+<pre><code class="language-bash">curl -s localhost:4201/mcp \
+  -H &#39;content-type: application/json&#39; -H &#39;accept: application/json, text/event-stream&#39; \
+  -d &#39;{&quot;jsonrpc&quot;:&quot;2.0&quot;,&quot;id&quot;:1,&quot;method&quot;:&quot;tools/call&quot;,
+       &quot;params&quot;:{&quot;name&quot;:&quot;check_stock&quot;,&quot;arguments&quot;:{&quot;slug&quot;:&quot;ridgeline-2p-ultralight-tent&quot;}}}&#39;
+# event: message
+# data: {&quot;result&quot;:{&quot;content&quot;:[{&quot;type&quot;:&quot;text&quot;,&quot;text&quot;:&quot;Ridgeline 2P Ultralight Tent\nForest Green: 24 available…&quot;}],
+#        &quot;structuredContent&quot;:{…}},&quot;jsonrpc&quot;:&quot;2.0&quot;,&quot;id&quot;:1}
+</code></pre>
+<p>Other methods to try: <code>initialize</code>, <code>tools/list</code>, <code>resources/list</code>, <code>resources/templates/list</code>, <code>resources/read</code> (<code>{&quot;uri&quot;:&quot;promotions://active&quot;}</code>), <code>prompts/list</code>, <code>prompts/get</code>.</p>
+<h2>5. Running and testing</h2>
+<pre><code class="language-bash">npm run dev:services          # the REST services the MCP servers call
+npm run dev:mcp               # mcp-catalog :4201 + mcp-promotions :4202 (also part of npm run dev)
+npm run smoke:mcp             # 19 read-only checks with the official MCP client
+npm run mcp:inspector         # opens MCP Inspector → Transport &quot;Streamable HTTP&quot;, URL http://localhost:4201/mcp
+</code></pre>
+<p><code>npm run smoke:mcp</code> connects exactly like a real host. It lists and calls every tool, reads every resource (including the template), fetches every prompt, and checks the error cases (unknown slug → <code>isError</code>, expired code, member-only code → &quot;log in&quot;).</p>
+<h3>Use them from other MCP clients</h3>
+<p>Because they speak standard MCP, other AI tools on your machine can use them too, as long as <code>npm run dev:services</code> and <code>npm run dev:mcp</code> are running:</p>
+<ul>
+<li><strong>Claude Code:</strong> <code>claude mcp add --transport http trailforge-catalog http://localhost:4201/mcp</code></li>
+<li><strong>VS Code</strong> (<code>.vscode/mcp.json</code>):<pre><code class="language-json">{ &quot;servers&quot;: { &quot;trailforge-catalog&quot;: { &quot;type&quot;: &quot;http&quot;, &quot;url&quot;: &quot;http://localhost:4201/mcp&quot; } } }
+</code></pre>
+</li>
+<li><strong>MCP Inspector:</strong> <code>npm run mcp:inspector</code>.</li>
+</ul>
+<p>If <code>MCP_AUTH_TOKEN</code> is set, add the <code>Authorization: Bearer …</code> header in the client&#39;s config. Check each client&#39;s current docs for its exact config format.</p>
+<h2>6. Extending</h2>
+<h3>Add a tool (example: <code>list_brands</code> in mcp-catalog)</h3>
+<ol>
+<li>Make sure the data is available from a service API (add an endpoint to the catalog service if needed; MCP servers never query a database).</li>
+<li>In <code>services/mcp-catalog/src/index.ts</code>, inside <code>buildServer()</code>:<pre><code class="language-ts">server.registerTool(
+  &#39;list_brands&#39;,
+  {
+    title: &#39;List brands&#39;,
+    description: &#39;All brands TrailForge sells, with how many products each has. Use when the customer asks which brands we carry.&#39;,
+    inputSchema: { category: z.enum(CATEGORIES).optional() },
+    annotations: { readOnlyHint: true, openWorldHint: false },
+  },
+  async ({ category }) =&gt; {
+    const { items } = await services.catalog&lt;{ items: { brand: string }[] }&gt;(&#39;/products&#39;, { query: { category, pageSize: 48 } });
+    const counts = Object.entries(items.reduce&lt;Record&lt;string, number&gt;&gt;((m, p) =&gt; ((m[p.brand] = (m[p.brand] ?? 0) + 1), m), {}));
+    return json(counts.map(([brand, products]) =&gt; ({ brand, products })));
+  },
+);
+</code></pre>
+</li>
+<li><code>tsx watch</code> restarts the server. The assistant lists tools on connect (cached), so restart the assistant or wait for it to reconnect.</li>
+<li>Add a check to <code>scripts/smoke/mcp-smoke.mjs</code> (update the expected tool count).</li>
+<li>Update <code>research/architecture.md</code> §MCP servers and this guide.</li>
+</ol>
+<h3>Add a new MCP server (example: <code>mcp-stores</code>)</h3>
+<ol>
+<li>Copy <code>services/mcp-promotions</code> → <code>services/mcp-stores</code>; set <code>&quot;name&quot;: &quot;@tf/mcp-stores&quot;</code> in <code>package.json</code>.</li>
+<li>Add <code>&#39;mcp-stores&#39;: { port: 4203 }</code> to <code>MCP_SERVERS</code> and <code>MCP_STORES_URL</code> to the config in <code>packages/shared/src/config.ts</code> (+ <code>.env.example</code>).</li>
+<li>Add <code>{ &quot;path&quot;: &quot;services/mcp-stores&quot; }</code> to the root <code>tsconfig.json</code>, and <code>&quot;npm:dev -w @tf/mcp-stores&quot;</code> to the root <code>dev:mcp</code> script.</li>
+<li>Register it in <code>services/assistant/src/mcp.ts</code> (<code>server(&#39;stores&#39;, config.MCP_STORES_URL)</code>).</li>
+<li><code>npm install</code>, <code>npm run typecheck</code>, <code>npm run dev</code>.</li>
+</ol>
+<h2>7. Design rules &amp; security</h2>
+<table>
+<thead>
+<tr>
+<th>Rule</th>
+<th>Why</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Public data only on MCP</td>
+<td>Shared connections can&#39;t carry per-user identity; private tools use <code>RunContext</code></td>
+</tr>
+<tr>
+<td>MCP servers call APIs, never databases</td>
+<td>Keeps service ownership of data; one place for business rules</td>
+</tr>
+<tr>
+<td>Stateless servers</td>
+<td>Horizontal scaling, no sticky sessions</td>
+</tr>
+<tr>
+<td>Descriptions say <em>when</em> to use a tool</td>
+<td>Better tool choice by the model</td>
+</tr>
+<tr>
+<td><code>isError</code> results, not crashes</td>
+<td>The model can recover (&quot;try search_products first&quot;)</td>
+</tr>
+<tr>
+<td>Treat tool output as <strong>data</strong>, never instructions</td>
+<td>Reviews are user-written and could contain &quot;ignore your rules…&quot;. <code>get_reviews</code> labels them as quoted opinions, and the agent&#39;s instructions forbid following instructions inside tool results. Phase 8 adds MCP <strong>tool output guardrails</strong> (<code>toolOutputGuardrails</code> on <code>MCPServerStreamableHttp</code>) to scan for injection.</td>
+</tr>
+<tr>
+<td>Internal-only network + optional token</td>
+<td>On Azure the MCP servers get <strong>internal ingress</strong> only; <code>MCP_AUTH_TOKEN</code> comes from Key Vault</td>
+</tr>
+<tr>
+<td>Localhost bind in dev</td>
+<td>DNS-rebinding protection from the SDK</td>
+</tr>
+</tbody></table>
+<h2>8. Troubleshooting</h2>
+<table>
+<thead>
+<tr>
+<th>Symptom</th>
+<th>Fix</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>curl</code> returns <code>406</code> / &quot;Not Acceptable&quot;</td>
+<td>Send <code>accept: application/json, text/event-stream</code></td>
+</tr>
+<tr>
+<td><code>GET /mcp</code> → 405</td>
+<td>Expected: stateless servers only accept <code>POST</code></td>
+</tr>
+<tr>
+<td>Tool result: <code>localhost:4002 unreachable</code></td>
+<td>The REST service behind it isn&#39;t running → <code>npm run dev:services</code></td>
+</tr>
+<tr>
+<td>Assistant status shows <code>connected: false</code></td>
+<td>Start <code>npm run dev:mcp</code>; the assistant retries every 30 s (or restart it)</td>
+</tr>
+<tr>
+<td>New tool not visible to the assistant</td>
+<td>Tools are cached per connection → restart the assistant</td>
+</tr>
+<tr>
+<td><code>EADDRINUSE :4201</code></td>
+<td>An MCP server is already running (maybe from an earlier terminal) → <code>lsof -nP -iTCP:4201 -sTCP:LISTEN</code></td>
+</tr>
+<tr>
+<td><code>401 Unauthorized</code></td>
+<td><code>MCP_AUTH_TOKEN</code> is set on the server; send the same token from the client</td>
+</tr>
+</tbody></table>
+<h2>9. Cheat sheet</h2>
+<pre><code class="language-bash">npm run dev:mcp                     # start both MCP servers
+npm run smoke:mcp                   # verify every tool/resource/prompt
+npm run mcp:inspector               # UI: Streamable HTTP → http://localhost:4201/mcp
+curl -s localhost:4202/healthz      # health
+# status as seen by the assistant (admin JWT):
+curl -s localhost:3000/api/admin/assistant/status -H &quot;authorization: Bearer &lt;admin token&gt;&quot;
+</code></pre>
+<p>Related: <a href="architecture.html">Architecture &amp; Contracts</a> (MCP section) · <a href="implementation-plan.html">Implementation Plan</a> (Phase 5) · <a href="monorepo-guide.html">Monorepo Guide</a></p>
+</main></div></body></html>

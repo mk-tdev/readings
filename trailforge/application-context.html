@@ -15,7 +15,7 @@ pre{background:var(--code);border:1px solid var(--line);border-radius:8px;paddin
 table{border-collapse:collapse;width:100%;font-size:14.5px;display:block;overflow-x:auto}th,td{border:1px solid var(--line);padding:7px 10px;text-align:left;vertical-align:top}th{background:var(--soft)}
 blockquote{margin:16px 0;padding:8px 16px;border-left:4px solid var(--accent);background:var(--soft);border-radius:0 8px 8px 0}
 @media (max-width:760px){.wrap{grid-template-columns:1fr}nav{position:static;height:auto;border-right:0;border-bottom:1px solid var(--line)}main{padding:24px 16px 80px}}
-</style></head><body><div class="wrap"><nav><a href="../" class="hub-link">← All readings</a><b>TrailForge research</b><a href="application-context.html" class="on">TrailForge: Application Context</a><a href="architecture.html" class="">TrailForge: Architecture & Contracts</a><a href="deployment-plan.html" class="">TrailForge: Deployment Plan</a><a href="implementation-plan.html" class="">TrailForge: Implementation Plan</a><a href="monorepo-guide.html" class="">Monorepo Guide: How the TrailForge Workspace Works</a></nav><main><h1>TrailForge: Application Context</h1>
+</style></head><body><div class="wrap"><nav><a href="../" class="hub-link">← All readings</a><b>TrailForge research</b><a href="application-context.html" class="on">TrailForge: Application Context</a><a href="architecture.html" class="">TrailForge: Architecture & Contracts</a><a href="deployment-plan.html" class="">TrailForge: Deployment Plan</a><a href="implementation-plan.html" class="">TrailForge: Implementation Plan</a><a href="mcp-guide.html" class="">MCP Guide: TrailForge's MCP Servers</a><a href="monorepo-guide.html" class="">Monorepo Guide: How the TrailForge Workspace Works</a></nav><main><h1>TrailForge: Application Context</h1>
 <blockquote>
 <p>Paste or reference this file at the start of a new chat so the assistant knows what we&#39;re building, why, how it&#39;s structured, where it stands, and the rules to follow.
 Repo: <a href="https://github.com/mk-tdev/trailforge">https://github.com/mk-tdev/trailforge</a> (private) · Local: <code>~/workspace/learning/trailforge</code>
@@ -236,13 +236,14 @@ assistant → Azure OpenAI, Azure AI Search, MCP servers, other services (REST, 
 </ul>
 </li>
 </ul>
-<p>Full contracts (ports, every endpoint, SSE events, data shapes) are in <strong><code>research/architecture.md</code></strong>. The plan and phases are in <strong><code>research/implementation-plan.md</code></strong>.</p>
+<p>Full contracts (ports, every endpoint, SSE events, data shapes) are in <strong><code>research/architecture.md</code></strong>. How the workspace runs: <strong><code>research/monorepo-guide.md</code></strong>. MCP servers: <strong><code>research/mcp-guide.md</code></strong>. The plan and phases are in <strong><code>research/implementation-plan.md</code></strong>.</p>
 <h2>7. Repository map</h2>
 <pre><code>packages/shared     config, db (pool/one/many/tx), migrate, auth, http (createService), errors,
                     service client, pricing (priceOrder), segments (segmentsFor/tierFor), types
 packages/chat-ui    ChatWidget, ChatPanel, ChatPage, useChat, SSE parser, styles (tfc- prefix)
 services/&lt;name&gt;     src/index.ts (Express) + migrations/*.sql
-services/assistant  src/agent.ts, context.ts, session.ts (PostgresSession), tools/public.ts, tools/private.ts
+services/mcp-*      MCP servers (catalog :4201, promotions :4202) on packages/mcp-kit
+services/assistant  src/agent.ts, mcp.ts, context.ts, session.ts (PostgresSession), tools/public.ts, tools/private.ts
 apps/web            Next.js: app/, components/, lib/gateway.ts (server-only), proxy.ts, app/api/session, app/api/[...path]
 apps/chat           Vite React full-screen chat
 data/               products.json (114 products, 527 variants), promotions.json (13 promos)
@@ -250,7 +251,7 @@ rag/knowledge/      47 handwritten docs (policies, privacy, about, stores, guide
 rag/products/       114 generated product docs (npm run rag:prepare)
 scripts/db          reset.ts, migrate.ts, seed.ts      scripts/rag   prepare.ts, ingest.ts
 scripts/smoke       api-smoke.mjs (21 end-to-end API checks)
-research/           application-context.md (this file), implementation-plan.md, architecture.md (+ .html)
+research/           application-context.md (this file), implementation-plan.md, architecture.md, deployment-plan.md, monorepo-guide.md, mcp-guide.md (+ .html)
 </code></pre>
 <h2>8. Commands &amp; test data</h2>
 <pre><code class="language-bash">npm run db:up          # Postgres + pgAdmin (Docker)
@@ -312,7 +313,7 @@ npm run typecheck &amp;&amp; npm run build -w @tf/web
 </tr>
 <tr>
 <td>5. Assistant core (search tools, MCP, streaming)</td>
-<td>🟡 skeleton done</td>
+<td>🟡 MCP servers (catalog, promotions) done; search tools need Azure</td>
 </tr>
 <tr>
 <td>6. Login-aware chat &amp; memory</td>
@@ -347,8 +348,9 @@ npm run typecheck &amp;&amp; npm run build -w @tf/web
 <ol>
 <li>Provision Azure OpenAI (<code>gpt-5-mini</code>, <code>text-embedding-3-small</code>) and Azure AI Search, then fill <code>AZURE_OPENAI_ENDPOINT</code> and <code>AZURE_SEARCH_ENDPOINT</code> in <code>.env</code>. Keys are optional: Entra ID via <code>az login</code> works.</li>
 <li><code>npm run rag:ingest</code>, then add a <code>search_knowledge</code> tool (hybrid search with citations) to the assistant.</li>
-<li>Phase 5: MCP servers for catalog + promotions. Phase 7: Concierge + specialist agents with handoffs and guardrails.</li>
+<li>Phase 7: Concierge + specialist agents with handoffs; Phase 8a: deterministic guardrails (can start without Azure).</li>
 </ol>
+<p>MCP servers (catalog, promotions) are built and connected. See <code>research/mcp-guide.md</code>.</p>
 <p><strong>Known gaps:</strong></p>
 <ul>
 <li>Token-by-token chat streaming isn&#39;t proven yet (no model is connected).</li>

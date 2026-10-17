@@ -15,11 +15,11 @@ pre{background:var(--code);border:1px solid var(--line);border-radius:8px;paddin
 table{border-collapse:collapse;width:100%;font-size:14.5px;display:block;overflow-x:auto}th,td{border:1px solid var(--line);padding:7px 10px;text-align:left;vertical-align:top}th{background:var(--soft)}
 blockquote{margin:16px 0;padding:8px 16px;border-left:4px solid var(--accent);background:var(--soft);border-radius:0 8px 8px 0}
 @media (max-width:760px){.wrap{grid-template-columns:1fr}nav{position:static;height:auto;border-right:0;border-bottom:1px solid var(--line)}main{padding:24px 16px 80px}}
-</style></head><body><div class="wrap"><nav><a href="../" class="hub-link">← All readings</a><b>TrailForge research</b><a href="application-context.html" class="">TrailForge: Application Context</a><a href="architecture.html" class="">TrailForge: Architecture & Contracts</a><a href="deployment-plan.html" class="">TrailForge: Deployment Plan</a><a href="implementation-plan.html" class="on">TrailForge: Implementation Plan</a><a href="monorepo-guide.html" class="">Monorepo Guide: How the TrailForge Workspace Works</a></nav><main><h1>TrailForge: Implementation Plan</h1>
+</style></head><body><div class="wrap"><nav><a href="../" class="hub-link">← All readings</a><b>TrailForge research</b><a href="application-context.html" class="">TrailForge: Application Context</a><a href="architecture.html" class="">TrailForge: Architecture & Contracts</a><a href="deployment-plan.html" class="">TrailForge: Deployment Plan</a><a href="implementation-plan.html" class="on">TrailForge: Implementation Plan</a><a href="mcp-guide.html" class="">MCP Guide: TrailForge's MCP Servers</a><a href="monorepo-guide.html" class="">Monorepo Guide: How the TrailForge Workspace Works</a></nav><main><h1>TrailForge: Implementation Plan</h1>
 <blockquote>
 <p>A full-stack outdoor &amp; hiking gear store built as microservices, with an agentic AI assistant made only with the <strong>OpenAI Agents SDK (JS)</strong>, with no orchestration framework. Learning project: every concept is implemented &quot;raw&quot; so you can see how it works.</p>
 <p><strong>Status legend:</strong> ✅ done · 🟡 in progress / partly done · ⬜ not started · 🔒 blocked (needs Azure)
-<strong>Last updated:</strong> 2026-10-17 · See also <a href="deployment-plan.html">Deployment Plan</a>, <a href="architecture.html">Architecture &amp; Contracts</a>, <a href="application-context.html">Application Context</a></p>
+<strong>Last updated:</strong> 2026-10-17 · See also <a href="deployment-plan.html">Deployment Plan</a>, <a href="architecture.html">Architecture &amp; Contracts</a>, <a href="application-context.html">Application Context</a>, <a href="monorepo-guide.html">Monorepo Guide</a>, <a href="mcp-guide.html">MCP Guide</a></p>
 </blockquote>
 <h2>1. Goals</h2>
 <ul>
@@ -106,6 +106,7 @@ blockquote{margin:16px 0;padding:8px 16px;border-left:4px solid var(--accent);ba
 ├── docker-compose.yml        # local postgres + pgadmin
 ├── packages/
 │   ├── shared/               # config, db pool, migrations, http helpers, auth, service client, pricing, segments, policy constants
+│   ├── mcp-kit/              # shared MCP host (Streamable HTTP, stateless) + result helpers
 │   └── chat-ui/              # React chat components: &lt;ChatWidget/&gt; and &lt;ChatPage/&gt;
 ├── services/
 │   ├── gateway/              # BFF :3000
@@ -116,7 +117,9 @@ blockquote{margin:16px 0;padding:8px 16px;border-left:4px solid var(--accent);ba
 │   ├── payment/              # simulated payment provider: charges + refunds
 │   ├── promotion/            # promotions, rules, eligibility, redemptions
 │   ├── marketing/            # segments, campaigns, messages (inbox)
-│   └── assistant/            # OpenAI Agents SDK: agents, tools, guardrails, workflows, sessions
+│   ├── assistant/            # OpenAI Agents SDK: agents, tools, guardrails, workflows, sessions
+│   ├── mcp-catalog/          # MCP server :4201 over the catalog API (public)
+│   └── mcp-promotions/       # MCP server :4202 over the promotion API (public promotions)
 ├── apps/
 │   ├── web/                  # Next.js 16 (App Router) storefront + admin console  → Vercel
 │   └── chat/                 # React + Vite standalone full-screen chat app        → Azure Static Web Apps
@@ -355,9 +358,9 @@ returns:   delivered ──► partially_returned / returned   (refund = amount 
 <td>⬜ Phase 7</td>
 </tr>
 <tr>
-<td>MCP servers (Streamable HTTP), tool filter, cache</td>
+<td>MCP servers (Streamable HTTP), <code>connectMcpServers</code>, tool cache</td>
 <td>catalog / promotion MCP</td>
-<td>⬜ Phase 5</td>
+<td>✅ (tool filters + MCP tool guardrails in Phase 8)</td>
 </tr>
 <tr>
 <td>Agents as tools (<code>asTool</code>)</td>
@@ -461,7 +464,7 @@ returns:   delivered ──► partially_returned / returned   (refund = amount 
 <td>5</td>
 <td>Assistant core: search tools, MCP servers, streaming chat</td>
 <td>Pre-login Q&amp;A with citations</td>
-<td>🟡 skeleton done · 🔒 Azure</td>
+<td>🟡 MCP servers done · search tools 🔒 Azure</td>
 </tr>
 <tr>
 <td>6</td>
@@ -542,11 +545,13 @@ returns:   delivered ──► partially_returned / returned   (refund = amount 
 </ul>
 <h3>Phase 5: Assistant core 🟡</h3>
 <ul>
-<li><input checked="" disabled="" type="checkbox"> Assistant service: one agent, 7 tools, Postgres session, SSE protocol, gateway proxy</li>
+<li><input checked="" disabled="" type="checkbox"> Assistant service: one agent, private function tools + MCP tools, Postgres session, SSE protocol, gateway proxy</li>
 <li><input checked="" disabled="" type="checkbox"> Chat widget in the store + full-screen chat app</li>
 <li><input disabled="" type="checkbox"> <code>search_knowledge</code> tool (hybrid search + semantic ranker, citations <code>[source#chunk]</code>)</li>
 <li><input disabled="" type="checkbox"> <code>search_products</code> on <code>tf-products</code> with filters (category, price, tags) + live stock/price check</li>
-<li><input disabled="" type="checkbox"> MCP servers for catalog + public promotions (Streamable HTTP), connected with <code>connectMcpServers</code></li>
+<li><input checked="" disabled="" type="checkbox"> MCP servers <code>mcp-catalog</code> (5 tools, resource + template, prompt) and <code>mcp-promotions</code> (3 tools, resource, prompt) on a shared <code>@tf/mcp-kit</code> host (Streamable HTTP, stateless)</li>
+<li><input checked="" disabled="" type="checkbox"> Assistant connects with <code>connectMcpServers</code> (<code>dropFailed</code>, 30 s retry); falls back to local function tools when a server is down; <code>/api/admin/assistant/status</code></li>
+<li><input checked="" disabled="" type="checkbox"> <code>npm run smoke:mcp</code> (19 checks) and <code>npm run mcp:inspector</code></li>
 <li><input disabled="" type="checkbox"> 🔒 Verify token-by-token streaming end to end with a live model</li>
 </ul>
 <h3>Phase 6: Login-aware chat &amp; memory 🟡</h3>

@@ -3,7 +3,7 @@
 > A full-stack outdoor & hiking gear store built as microservices, with an agentic AI assistant made only with the **OpenAI Agents SDK (JS)**, with no orchestration framework. Learning project: every concept is implemented "raw" so you can see how it works.
 >
 > **Status legend:** ✅ done · 🟡 in progress / partly done · ⬜ not started · 🔒 blocked (needs Azure)
-> **Last updated:** 2026-10-17 · See also [Deployment Plan](deployment-plan.md), [Architecture & Contracts](architecture.md), [Application Context](application-context.md), [Monorepo Guide](monorepo-guide.md), [MCP Guide](mcp-guide.md)
+> **Last updated:** 2026-10-17 · See also [Deployment Plan](deployment-plan.md), [Architecture & Contracts](architecture.md), [Application Context](application-context.md), [Monorepo Guide](monorepo-guide.md), [MCP Guide](mcp-guide.md), [Azure OpenAI Setup](azure-openai-setup.md), [Azure AI Search for RAG](azure-ai-search-rag-setup.md)
 
 ## 1. Goals
 
@@ -246,7 +246,7 @@ Streaming caveat: output guardrails run after the full answer, so high-stakes an
 ### Phase 4: Azure AI foundation + RAG data 🟡
 - [x] 51 knowledge docs (incl. refund, delivery, cancellation, damaged/lost, policies overview) + 114 generated product docs
 - [x] `rag:prepare` and `rag:ingest` scripts (heading-aware chunking, two indexes, vector + semantic config)
-- [ ] 🔒 Provision Azure OpenAI (`gpt-5-mini`, `text-embedding-3-small`) + Azure AI Search; fill `.env`
+- [ ] 🔒 Provision Azure OpenAI (`gpt-5-mini`, `text-embedding-3-small`) + Azure AI Search; fill `.env` (guides: [Azure OpenAI Setup](azure-openai-setup.md), [Azure AI Search for RAG](azure-ai-search-rag-setup.md))
 - [ ] 🔒 Run `rag:ingest`; check queries in Search Explorer (keyword vs vector vs hybrid)
 - [ ] RAG eval set: ~30 questions with expected source docs; report hit@3
 

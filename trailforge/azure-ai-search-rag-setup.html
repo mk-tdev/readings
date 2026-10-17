@@ -1,0 +1,392 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Azure AI Search for RAG: Setup Guide</title>
+<style>
+:root{--bg:#fbfaf7;--fg:#1f2a24;--muted:#5b6b62;--line:#dfe3dc;--accent:#2f6b4f;--code:#f0f2ec;--soft:#eef3ee}
+@media (prefers-color-scheme:dark){:root{--bg:#121714;--fg:#e4ebe6;--muted:#9aa9a0;--line:#2b352f;--accent:#6fbf93;--code:#1b221e;--soft:#18211c}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.65 system-ui,-apple-system,"Segoe UI",sans-serif}
+.wrap{display:grid;grid-template-columns:240px minmax(0,1fr);min-height:100vh}
+nav{border-right:1px solid var(--line);padding:24px 16px;position:sticky;top:0;height:100vh;overflow:auto;background:var(--soft)}
+nav b{display:block;margin-bottom:12px;color:var(--accent)}nav a{display:block;padding:6px 8px;border-radius:6px;color:var(--fg);text-decoration:none;font-size:14px}
+nav a.on,nav a:hover{background:var(--bg);color:var(--accent)}
+main{max-width:900px;padding:40px 40px 100px}h1{font-size:30px;line-height:1.25}h2{margin-top:40px;padding-bottom:6px;border-bottom:1px solid var(--line)}
+a{color:var(--accent)}code{background:var(--code);padding:2px 5px;border-radius:4px;font-size:.88em}
+pre{background:var(--code);border:1px solid var(--line);border-radius:8px;padding:14px;overflow-x:auto;font-size:13px;line-height:1.5}pre code{padding:0;background:none}
+table{border-collapse:collapse;width:100%;font-size:14.5px;display:block;overflow-x:auto}th,td{border:1px solid var(--line);padding:7px 10px;text-align:left;vertical-align:top}th{background:var(--soft)}
+blockquote{margin:16px 0;padding:8px 16px;border-left:4px solid var(--accent);background:var(--soft);border-radius:0 8px 8px 0}
+@media (max-width:760px){.wrap{grid-template-columns:1fr}nav{position:static;height:auto;border-right:0;border-bottom:1px solid var(--line)}main{padding:24px 16px 80px}}
+</style></head><body><div class="wrap"><nav><a href="../" class="hub-link">← All readings</a><b>TrailForge research</b><a href="application-context.html" class="">TrailForge: Application Context</a><a href="architecture.html" class="">TrailForge: Architecture & Contracts</a><a href="azure-ai-search-rag-setup.html" class="on">Azure AI Search for RAG: Setup Guide</a><a href="azure-openai-setup.html" class="">Azure OpenAI Setup Guide</a><a href="deployment-plan.html" class="">TrailForge: Deployment Plan</a><a href="implementation-plan.html" class="">TrailForge: Implementation Plan</a><a href="mcp-guide.html" class="">MCP Guide: TrailForge's MCP Servers</a><a href="monorepo-guide.html" class="">Monorepo Guide: How the TrailForge Workspace Works</a></nav><main><h1>Azure AI Search for RAG: Setup Guide</h1>
+<blockquote>
+<p>What Azure AI Search is, how it powers RAG (retrieval-augmented generation), and how to set it up for TrailForge in the <strong>portal</strong> or with the <strong>CLI</strong>: create the service, grant access, build the two indexes from our Markdown, test queries, and wire it into the assistant.
+Prerequisite: <a href="azure-openai-setup.html">Azure OpenAI Setup</a> is done (we need the <code>text-embedding-3-small</code> deployment).</p>
+</blockquote>
+<h2>1. RAG in one picture</h2>
+<p>An LLM doesn&#39;t know TrailForge&#39;s return policy or product specs. <strong>RAG</strong> fixes that by <em>retrieving</em> the right passages at question time and putting them in the prompt.</p>
+<pre><code> OFFLINE (once, and whenever docs change)            ONLINE (every question)
+ ────────────────────────────────────────            ────────────────────────────────────────────
+ rag/knowledge/*.md  rag/products/*.md               &quot;Can I return a GPS watch after 45 days?&quot;
+        │ 1. load                                            │ 1. embed the question
+        │ 2. chunk (on ## headings, ~900 chars)              │ 2. search the index (keyword + vector)
+        │ 3. embed each chunk → 1536 numbers                 │ 3. top passages → into the prompt
+        │ 4. upload text + vector + metadata                 │ 4. model answers, citing sources
+        ▼                                                    ▼
+   Azure AI Search index  ◄──────────── query ─────────── assistant (search tool)
+</code></pre>
+<p><strong>Azure AI Search</strong> is the &quot;search the index&quot; part: a managed search engine that stores your chunks and finds the best ones by <strong>keywords</strong>, by <strong>meaning (vectors)</strong>, or <strong>both (hybrid)</strong>, then can <strong>re-rank</strong> them with a semantic model.</p>
+<h2>2. Concepts you need</h2>
+<table>
+<thead>
+<tr>
+<th>Concept</th>
+<th>What it is</th>
+<th>TrailForge</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>Search service</strong></td>
+<td>The Azure resource (endpoint <code>https://&lt;name&gt;.search.windows.net</code>)</td>
+<td>One service</td>
+</tr>
+<tr>
+<td><strong>Index</strong></td>
+<td>A table of documents with a schema</td>
+<td><code>tf-knowledge</code> (policies, guides, FAQs) and <code>tf-products</code> (one doc per product chunk)</td>
+</tr>
+<tr>
+<td><strong>Document</strong></td>
+<td>One row; for RAG, one <strong>chunk</strong></td>
+<td><code>returns-and-refunds-3</code> = 4th chunk of the returns policy</td>
+</tr>
+<tr>
+<td><strong>Field attributes</strong></td>
+<td><code>searchable</code> (full-text), <code>filterable</code>, <code>sortable</code>, <code>facetable</code>, <code>key</code></td>
+<td><code>category</code>, <code>priceCents</code> filterable on products</td>
+</tr>
+<tr>
+<td><strong>Keyword search (BM25)</strong></td>
+<td>Classic ranking: rare query words that appear often in a chunk score high</td>
+<td>Great for exact terms (&quot;FALLTRAIL20&quot;, &quot;3L shell&quot;)</td>
+</tr>
+<tr>
+<td><strong>Vector search (HNSW)</strong></td>
+<td>Each chunk&#39;s embedding is stored; the query embedding finds the <em>nearest meanings</em> (cosine)</td>
+<td>&quot;Can I send back my headlamp?&quot; finds &quot;Electronics: 30 days&quot;</td>
+</tr>
+<tr>
+<td><strong>Hybrid search</strong></td>
+<td>Run both, then merge with <strong>Reciprocal Rank Fusion (RRF)</strong></td>
+<td>Our default for RAG: robust to both exact codes and paraphrases</td>
+</tr>
+<tr>
+<td><strong>Semantic ranker</strong></td>
+<td>A Microsoft re-ranking model that re-orders the top results by how well they answer the question; can also return captions</td>
+<td>Optional on top of hybrid (<code>queryType: semantic</code>)</td>
+</tr>
+<tr>
+<td><strong>Filters</strong></td>
+<td>OData expressions applied before/with ranking</td>
+<td><code>category eq &#39;tents&#39; and priceCents le 40000</code></td>
+</tr>
+</tbody></table>
+<p><strong>Why two indexes?</strong> Products and policies are different shapes: products need filters (category, brand, price, tags) and are re-generated from <code>data/products.json</code>, while knowledge docs are handwritten prose. Separate indexes keep schemas simple and let the agent pick the right one.</p>
+<p><strong>What we never index:</strong> live stock, live prices, orders, customer data, customer reviews (user-written text, so a prompt-injection risk). Live facts come from service APIs or MCP tools at answer time.</p>
+<h2>3. TrailForge&#39;s index schema (from <code>scripts/rag/src/ingest.ts</code>)</h2>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Attributes</th>
+<th>Both indexes?</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>id</code></td>
+<td>String</td>
+<td><strong>key</strong>, filterable</td>
+<td>✓ (<code>&lt;file-slug&gt;-&lt;chunkIndex&gt;</code>)</td>
+</tr>
+<tr>
+<td><code>source</code></td>
+<td>String</td>
+<td>filterable, facetable</td>
+<td>✓ (file name, used for citations)</td>
+</tr>
+<tr>
+<td><code>title</code></td>
+<td>String</td>
+<td>searchable</td>
+<td>✓ (the doc&#39;s <code># Title</code>)</td>
+</tr>
+<tr>
+<td><code>section</code></td>
+<td>String</td>
+<td>searchable</td>
+<td>✓ (the chunk&#39;s <code>## Heading</code>)</td>
+</tr>
+<tr>
+<td><code>chunkIndex</code></td>
+<td>Int32</td>
+<td></td>
+<td>✓</td>
+</tr>
+<tr>
+<td><code>content</code></td>
+<td>String</td>
+<td>searchable</td>
+<td>✓ (the chunk text the model reads)</td>
+</tr>
+<tr>
+<td><code>contentVector</code></td>
+<td>Collection(Single), <strong>1536 dims</strong></td>
+<td>vector profile <code>vprofile</code> (HNSW, cosine)</td>
+<td>✓</td>
+</tr>
+<tr>
+<td><code>slug</code>, <code>category</code>, <code>brand</code></td>
+<td>String</td>
+<td>filterable (+ facetable)</td>
+<td>products only</td>
+</tr>
+<tr>
+<td><code>priceCents</code></td>
+<td>Int32</td>
+<td>filterable, sortable</td>
+<td>products only</td>
+</tr>
+<tr>
+<td><code>tags</code></td>
+<td>Collection(String)</td>
+<td>filterable, facetable</td>
+<td>products only</td>
+</tr>
+</tbody></table>
+<ul>
+<li><strong>Semantic configuration</strong> <code>semantic</code>: title field <code>title</code>, content field <code>content</code>, keywords field <code>section</code>.</li>
+<li><strong>Chunking:</strong> split on <code>##</code> headings, pack paragraphs up to ~900 characters with ~150 characters of overlap, keep the heading with each chunk. The text embedded is <code>title — section</code> + the chunk, so short chunks keep their context.</li>
+</ul>
+<h2>4. Pick a tier</h2>
+<table>
+<thead>
+<tr>
+<th>Tier</th>
+<th>Cost</th>
+<th>Limits</th>
+<th>Semantic ranker</th>
+<th>Use when</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>Free</strong></td>
+<td>$0</td>
+<td>1 per subscription, 50 MB storage, 3 indexes, shared compute</td>
+<td>May not be available; check the portal</td>
+<td>Learning; TrailForge&#39;s ~1,000 chunks fit</td>
+</tr>
+<tr>
+<td><strong>Basic</strong></td>
+<td>≈ $75 / month (billed hourly)</td>
+<td>2 GB per partition, dedicated</td>
+<td>✓ (free plan up to a monthly query limit)</td>
+<td>You want the semantic ranker or more headroom</td>
+</tr>
+</tbody></table>
+<p>Our 2 indexes × about 1,000 chunks × 1536-number vectors come to only a few MB. If the semantic ranker isn&#39;t available on your tier, just don&#39;t use <code>queryType: semantic</code>. Hybrid works on every tier.</p>
+<h2>5. Set up in the Azure portal</h2>
+<ol>
+<li><p><strong>Create the service.</strong> Portal → <em>Create a resource</em> → <strong>Azure AI Search</strong> → <em>Create</em>:</p>
+<ul>
+<li>Resource group <code>rg-trailforge</code> (same as Azure OpenAI), region <strong>East US 2</strong> (same region keeps latency low)</li>
+<li>Service name <code>trailforge-search-&lt;unique&gt;</code> → endpoint <code>https://trailforge-search-&lt;unique&gt;.search.windows.net</code></li>
+<li>Pricing tier <strong>Free</strong> or <strong>Basic</strong> → <em>Review + create</em>.</li>
+</ul>
+</li>
+<li><p><strong>Enable Entra ID (keyless) access.</strong> Service → <em>Settings → Keys</em> → <strong>API access control</strong>: choose <strong>Both</strong> (role-based access control <em>and</em> API keys) → <em>Save</em>. This lets our code use <code>az login</code> / Managed Identity while keys still work for quick tests.</p>
+</li>
+<li><p><strong>Enable the semantic ranker</strong> (Basic+). Service → <em>Settings → Semantic ranker</em> → <strong>Free</strong> plan → <em>Save</em>.</p>
+</li>
+<li><p><strong>Grant yourself roles.</strong> Service → <em>Access control (IAM)</em> → <em>Add role assignment</em>:</p>
+<ul>
+<li><strong>Search Service Contributor</strong>: create and update indexes (the ingest script does this)</li>
+<li><strong>Search Index Data Contributor</strong>: upload and query documents</li>
+</ul>
+<p>Assign both to your user, then allow ~5–10 minutes. (On Azure, the assistant&#39;s Managed Identity only needs <strong>Search Index Data Reader</strong>.)</p>
+</li>
+<li><p><strong>Copy the endpoint</strong> from the service <em>Overview</em> (the <strong>Url</strong>).</p>
+</li>
+</ol>
+<h2>6. The same setup with the Azure CLI</h2>
+<pre><code class="language-bash">RG=rg-trailforge
+LOC=eastus2
+SEARCH=trailforge-search-$RANDOM                     # globally unique
+SKU=free                                              # or: basic
+
+# Service with keys AND Entra ID accepted (401 + bearer challenge for bad tokens)
+az search service create -g $RG -n $SEARCH -l $LOC --sku $SKU \
+  --auth-options aadOrApiKey --aad-auth-failure-mode http401WithBearerChallenge
+
+# Basic+: turn on the semantic ranker&#39;s free plan
+[ &quot;$SKU&quot; != free ] &amp;&amp; az search service update -g $RG -n $SEARCH --semantic-search free
+
+# Roles for YOU (create indexes + read/write documents)
+SCOPE=$(az search service show -g $RG -n $SEARCH --query id -o tsv)
+ME=$(az ad signed-in-user show --query id -o tsv)
+az role assignment create --assignee $ME --role &quot;Search Service Contributor&quot; --scope $SCOPE
+az role assignment create --assignee $ME --role &quot;Search Index Data Contributor&quot; --scope $SCOPE
+
+echo &quot;AZURE_SEARCH_ENDPOINT=https://$SEARCH.search.windows.net&quot;
+</code></pre>
+<h2>7. Configure TrailForge and build the indexes</h2>
+<p>Root <code>.env</code>:</p>
+<pre><code class="language-bash">AZURE_SEARCH_ENDPOINT=https://trailforge-search-xyz.search.windows.net
+AZURE_SEARCH_API_KEY=                     # leave EMPTY → Entra ID via az login
+AZURE_SEARCH_PRODUCTS_INDEX=tf-products
+AZURE_SEARCH_KNOWLEDGE_INDEX=tf-knowledge
+# and from the Azure OpenAI guide:
+AZURE_OPENAI_ENDPOINT=https://trailforge-openai-xyz.openai.azure.com
+AZURE_OPENAI_EMBEDDING_DEPLOYMENT=text-embedding-3-small
+</code></pre>
+<p>Run the pipeline:</p>
+<pre><code class="language-bash">npm run rag:prepare     # data/products.json → rag/products/*.md (114 docs, with front-matter metadata)
+npm run rag:ingest      # for each index: createOrUpdateIndex → chunk → embed (batches of 16) → upload (batches of 500)
+</code></pre>
+<p>Expected output: <code>▶ tf-products ← rag/products … ✓ N chunks uploaded</code>, then the same for <code>tf-knowledge</code>.</p>
+<p><strong>Re-running</strong> is safe: <code>createOrUpdateIndex</code> keeps the schema and <code>mergeOrUploadDocuments</code> updates chunks by <code>id</code>. <strong>But</strong> chunks that no longer exist (a doc got shorter, a file was deleted) are <em>not</em> removed. When docs shrink or are renamed, delete the index and ingest again:</p>
+<pre><code class="language-bash">TOKEN=$(az account get-access-token --resource https://search.azure.com --query accessToken -o tsv)
+curl -X DELETE &quot;$AZURE_SEARCH_ENDPOINT/indexes/tf-knowledge?api-version=2024-07-01&quot; -H &quot;Authorization: Bearer $TOKEN&quot;
+npm run rag:ingest
+</code></pre>
+<h2>8. Test queries</h2>
+<h3>In the portal</h3>
+<p>Service → <em>Indexes</em> → <code>tf-knowledge</code> → <strong>Search explorer</strong>. Try <code>return window electronics</code>, then switch to <em>JSON view</em> to add <code>&quot;select&quot;: &quot;source,section,content&quot;, &quot;top&quot;: 3</code>.</p>
+<h3>With the REST API</h3>
+<pre><code class="language-bash">TOKEN=$(az account get-access-token --resource https://search.azure.com --query accessToken -o tsv)
+Q() { curl -s &quot;$AZURE_SEARCH_ENDPOINT/indexes/$1/docs/search?api-version=2024-07-01&quot; \
+        -H &quot;Authorization: Bearer $TOKEN&quot; -H &quot;content-type: application/json&quot; -d &quot;$2&quot; | jq &#39;.value[] | {source, section, score: .[&quot;@search.score&quot;]}&#39;; }
+
+# 1. keyword (BM25)
+Q tf-knowledge &#39;{&quot;search&quot;:&quot;refund amount promo code tax&quot;,&quot;top&quot;:3,&quot;select&quot;:&quot;source,section&quot;}&#39;
+
+# 2. semantic re-ranking (Basic+)
+Q tf-knowledge &#39;{&quot;search&quot;:&quot;can I send back my headlamp after six weeks?&quot;,&quot;queryType&quot;:&quot;semantic&quot;,&quot;semanticConfiguration&quot;:&quot;semantic&quot;,&quot;top&quot;:3,&quot;select&quot;:&quot;source,section&quot;}&#39;
+
+# 3. filters on products
+Q tf-products &#39;{&quot;search&quot;:&quot;waterproof&quot;,&quot;filter&quot;:&quot;category eq &#39;\&#39;&#39;tents&#39;\&#39;&#39; and priceCents le 40000&quot;,&quot;top&quot;:5,&quot;select&quot;:&quot;source,section&quot;}&#39;
+</code></pre>
+<p><strong>Vector and hybrid queries</strong> need the query&#39;s embedding (1536 numbers), so they&#39;re easiest in code (next section). Our index doesn&#39;t define an integrated vectorizer, so the search service won&#39;t embed text for you. That&#39;s deliberate: we control the embedding model in one place.</p>
+<h3>Compare keyword vs vector vs hybrid (good exercise)</h3>
+<p>Ask the same 5 questions three ways, note the top-3 <code>source</code> each time:</p>
+<ul>
+<li><em>&quot;FALLTRAIL20&quot;</em>: keyword wins (an exact code).</li>
+<li><em>&quot;my boots got wet, how do I dry them?&quot;</em>: vector wins (paraphrase of the care guide).</li>
+<li>Hybrid should be at least as good as the better of the two for most questions. That&#39;s why RAG uses it.</li>
+</ul>
+<h2>9. Use it from the assistant (agentic RAG)</h2>
+<p>The search index is filled by <code>rag:ingest</code>; the <strong>assistant tool that queries it (<code>search_knowledge</code>) is the next build step (Phase 5).</strong> This is what it looks like, with the same SDK as the ingest script:</p>
+<pre><code class="language-ts">import { SearchClient } from &#39;@azure/search-documents&#39;;
+import { DefaultAzureCredential } from &#39;@azure/identity&#39;;
+import { tool } from &#39;@openai/agents&#39;;
+import { z } from &#39;zod&#39;;
+
+const search = new SearchClient&lt;Chunk&gt;(process.env.AZURE_SEARCH_ENDPOINT!, &#39;tf-knowledge&#39;, new DefaultAzureCredential());
+
+export const searchKnowledge = tool({
+  name: &#39;search_knowledge&#39;,
+  description: &#39;Search TrailForge policies, guides and FAQs (returns, refunds, shipping, warranty, sizing, care…). &#39; +
+               &#39;Returns passages with [source#chunk] ids; cite them in the answer.&#39;,
+  parameters: z.object({ query: z.string().describe(&#39;A focused search query rephrased from the question&#39;), top: z.number().int().min(1).max(8).default(5) }),
+  execute: async ({ query, top }) =&gt; {
+    const vector = (await openai.embeddings.create({ model: EMBED_DEPLOYMENT, input: query })).data[0].embedding;
+    const results = await search.search(query, {                     // keyword part
+      top,
+      select: [&#39;source&#39;, &#39;section&#39;, &#39;chunkIndex&#39;, &#39;content&#39;],
+      vectorSearchOptions: { queries: [{ kind: &#39;vector&#39;, vector, fields: [&#39;contentVector&#39;], kNearestNeighborsCount: 50 }] }, // vector part → hybrid (RRF)
+      queryType: &#39;semantic&#39;, semanticSearchOptions: { configurationName: &#39;semantic&#39; },                                    // optional re-rank (Basic+)
+    });
+    const passages = [];
+    for await (const r of results.results) passages.push(`[${r.document.source}#${r.document.chunkIndex}] ${r.document.section}\n${r.document.content}`);
+    return passages.length ? passages.join(&#39;\n---\n&#39;) : &#39;NO_RELEVANT_PASSAGES: say you don&#39;t know and offer support contact.&#39;;
+  },
+});
+</code></pre>
+<p><strong>Why a tool (&quot;agentic RAG&quot;) instead of always stuffing passages into the prompt?</strong></p>
+<ul>
+<li>The agent decides <em>when</em> it needs knowledge (product questions use MCP catalog tools; policy questions use <code>search_knowledge</code>).</li>
+<li>It can rephrase the query, search twice, or combine with live data (&quot;is this tent in stock <em>and</em> can I return it?&quot;).</li>
+<li>Guardrails attach naturally: relevance cutoff, injection scan on returned chunks, and citation checks (Phase 8).</li>
+</ul>
+<h2>10. Security, cost and operations</h2>
+<ul>
+<li><strong>Keyless everywhere:</strong> your user locally, the assistant&#39;s Managed Identity on Azure (<strong>Search Index Data Reader</strong>), the ingest job&#39;s identity (<strong>Search Index Data Contributor</strong> + <strong>Search Service Contributor</strong>). Disable API keys later (<code>--disable-local-auth</code>) once everything uses Entra ID.</li>
+<li><strong>Network:</strong> public endpoint is fine for learning; production can use a private endpoint inside the Container Apps VNet.</li>
+<li><strong>Cost:</strong> Free = $0; Basic ≈ $75/month billed hourly. <strong>Delete the service</strong> (or the resource group) when you stop practising. Embedding ~1,000 chunks costs fractions of a cent.</li>
+<li><strong>Freshness:</strong> re-run <code>rag:prepare</code> + <code>rag:ingest</code> whenever docs or products change (on Azure: the <code>rag-ingest</code> job in the deployment plan).</li>
+</ul>
+<h2>11. Troubleshooting</h2>
+<table>
+<thead>
+<tr>
+<th>Problem</th>
+<th>Cause</th>
+<th>Fix</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>403 Forbidden</code> creating the index</td>
+<td>Missing <strong>Search Service Contributor</strong></td>
+<td>Assign it; wait 5–10 min</td>
+</tr>
+<tr>
+<td><code>403</code> uploading or querying</td>
+<td>Missing <strong>Search Index Data Contributor/Reader</strong>, or API access control set to &quot;API keys&quot; only</td>
+<td>Assign the role; set access control to <strong>Both</strong> (or RBAC)</td>
+</tr>
+<tr>
+<td><code>401</code> with a bearer token</td>
+<td>Token for the wrong resource</td>
+<td>Use <code>--resource https://search.azure.com</code></td>
+</tr>
+<tr>
+<td><code>The vector field &#39;contentVector&#39; … dimensions</code></td>
+<td>Embedding model ≠ 1536 dims</td>
+<td>Use <code>text-embedding-3-small</code> (1536) or change <code>DIMS</code> and recreate the index</td>
+</tr>
+<tr>
+<td><code>Semantic search is not enabled</code></td>
+<td>Free tier / ranker off</td>
+<td>Enable the semantic ranker (Basic+), or drop <code>queryType: semantic</code></td>
+</tr>
+<tr>
+<td>Old text still returned after editing a doc</td>
+<td>Removed chunks aren&#39;t deleted by re-ingest</td>
+<td>Delete the index and ingest again (§7)</td>
+</tr>
+<tr>
+<td><code>429</code> during ingest</td>
+<td>Embedding TPM exceeded</td>
+<td>Re-run (it&#39;s idempotent), or raise the embedding deployment&#39;s capacity</td>
+</tr>
+<tr>
+<td>Index schema change fails (<code>CannotChangeExistingField</code>)</td>
+<td>Existing fields can&#39;t change type</td>
+<td>Delete the index and ingest again</td>
+</tr>
+<tr>
+<td>Poor results</td>
+<td>Chunks too big/small, missing headings</td>
+<td>Check <code>rag/knowledge</code> docs have <code>##</code> sections; compare keyword/vector/hybrid (§8)</td>
+</tr>
+</tbody></table>
+<h2>12. Checklist</h2>
+<ul>
+<li><input disabled="" type="checkbox"> Search service created (Free or Basic) in the same region as Azure OpenAI</li>
+<li><input disabled="" type="checkbox"> API access control set to <strong>Both</strong> (or RBAC); semantic ranker enabled if Basic</li>
+<li><input disabled="" type="checkbox"> Roles: <strong>Search Service Contributor</strong> + <strong>Search Index Data Contributor</strong> for me</li>
+<li><input disabled="" type="checkbox"> <code>.env</code> filled (<code>AZURE_SEARCH_ENDPOINT</code>, index names, embedding deployment)</li>
+<li><input disabled="" type="checkbox"> <code>npm run rag:prepare &amp;&amp; npm run rag:ingest</code> uploaded both indexes</li>
+<li><input disabled="" type="checkbox"> Search explorer + REST keyword/semantic/filter queries return sensible chunks</li>
+<li><input disabled="" type="checkbox"> Compared keyword vs vector vs hybrid on 5 questions</li>
+<li><input disabled="" type="checkbox"> Next: build <code>search_knowledge</code> (Phase 5) and add RAG guardrails (Phase 8)</li>
+</ul>
+<p>Related: <a href="azure-openai-setup.html">Azure OpenAI Setup</a> · <a href="implementation-plan.html">Implementation Plan</a> (Phases 4, 5, 8) · <a href="deployment-plan.html">Deployment Plan</a> · <a href="mcp-guide.html">MCP Guide</a></p>
+</main></div></body></html>

@@ -1,0 +1,318 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Azure OpenAI Setup Guide</title>
+<style>
+:root{--bg:#fbfaf7;--fg:#1f2a24;--muted:#5b6b62;--line:#dfe3dc;--accent:#2f6b4f;--code:#f0f2ec;--soft:#eef3ee}
+@media (prefers-color-scheme:dark){:root{--bg:#121714;--fg:#e4ebe6;--muted:#9aa9a0;--line:#2b352f;--accent:#6fbf93;--code:#1b221e;--soft:#18211c}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.65 system-ui,-apple-system,"Segoe UI",sans-serif}
+.wrap{display:grid;grid-template-columns:240px minmax(0,1fr);min-height:100vh}
+nav{border-right:1px solid var(--line);padding:24px 16px;position:sticky;top:0;height:100vh;overflow:auto;background:var(--soft)}
+nav b{display:block;margin-bottom:12px;color:var(--accent)}nav a{display:block;padding:6px 8px;border-radius:6px;color:var(--fg);text-decoration:none;font-size:14px}
+nav a.on,nav a:hover{background:var(--bg);color:var(--accent)}
+main{max-width:900px;padding:40px 40px 100px}h1{font-size:30px;line-height:1.25}h2{margin-top:40px;padding-bottom:6px;border-bottom:1px solid var(--line)}
+a{color:var(--accent)}code{background:var(--code);padding:2px 5px;border-radius:4px;font-size:.88em}
+pre{background:var(--code);border:1px solid var(--line);border-radius:8px;padding:14px;overflow-x:auto;font-size:13px;line-height:1.5}pre code{padding:0;background:none}
+table{border-collapse:collapse;width:100%;font-size:14.5px;display:block;overflow-x:auto}th,td{border:1px solid var(--line);padding:7px 10px;text-align:left;vertical-align:top}th{background:var(--soft)}
+blockquote{margin:16px 0;padding:8px 16px;border-left:4px solid var(--accent);background:var(--soft);border-radius:0 8px 8px 0}
+@media (max-width:760px){.wrap{grid-template-columns:1fr}nav{position:static;height:auto;border-right:0;border-bottom:1px solid var(--line)}main{padding:24px 16px 80px}}
+</style></head><body><div class="wrap"><nav><a href="../" class="hub-link">← All readings</a><b>TrailForge research</b><a href="application-context.html" class="">TrailForge: Application Context</a><a href="architecture.html" class="">TrailForge: Architecture & Contracts</a><a href="azure-ai-search-rag-setup.html" class="">Azure AI Search for RAG: Setup Guide</a><a href="azure-openai-setup.html" class="on">Azure OpenAI Setup Guide</a><a href="deployment-plan.html" class="">TrailForge: Deployment Plan</a><a href="implementation-plan.html" class="">TrailForge: Implementation Plan</a><a href="mcp-guide.html" class="">MCP Guide: TrailForge's MCP Servers</a><a href="monorepo-guide.html" class="">Monorepo Guide: How the TrailForge Workspace Works</a></nav><main><h1>Azure OpenAI Setup Guide</h1>
+<blockquote>
+<p>What Azure OpenAI is, how it works, and how to set it up for TrailForge, step by step in the <strong>Azure portal</strong> and with the <strong>Azure CLI</strong>, then connect the assistant and verify it.
+You&#39;ll end up with: one Azure OpenAI resource, two model deployments (<code>gpt-5-mini</code> for chat, <code>text-embedding-3-small</code> for RAG), keyless access from your laptop, and a working TrailForge chat.</p>
+</blockquote>
+<h2>1. What Azure OpenAI is</h2>
+<p><strong>Azure OpenAI</strong> runs OpenAI&#39;s models (GPT, embeddings…) inside <strong>your Azure subscription</strong>. You call the same kind of API as OpenAI&#39;s own platform, but:</p>
+<table>
+<thead>
+<tr>
+<th></th>
+<th>OpenAI platform</th>
+<th>Azure OpenAI</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Account</td>
+<td>platform.openai.com account</td>
+<td>An Azure <strong>resource</strong> in your subscription</td>
+</tr>
+<tr>
+<td>Login</td>
+<td>API key</td>
+<td>API key <strong>or Microsoft Entra ID</strong> (no secrets)</td>
+</tr>
+<tr>
+<td>Where data is processed</td>
+<td>OpenAI</td>
+<td>The Azure region / geography you choose</td>
+</tr>
+<tr>
+<td>Models</td>
+<td>Use any by name</td>
+<td>You first <strong>deploy</strong> a model, then call your deployment</td>
+</tr>
+<tr>
+<td>Limits</td>
+<td>Per account</td>
+<td>Per deployment (<strong>TPM</strong>: tokens per minute)</td>
+</tr>
+<tr>
+<td>Networking, compliance</td>
+<td>Basic</td>
+<td>Private networking, Azure Policy, enterprise compliance</td>
+</tr>
+</tbody></table>
+<p>You get it through <strong>Azure AI Foundry</strong> (the portal for AI models at <a href="https://ai.azure.com">https://ai.azure.com</a>) or the classic Azure portal.</p>
+<h2>2. How it works: three words to learn</h2>
+<pre><code>Azure subscription
+└── Resource group  rg-trailforge
+    └── Azure OpenAI resource  &quot;trailforge-openai&quot;            ← has an ENDPOINT + access control
+        ├── Deployment &quot;gpt-5-mini&quot;           → model gpt-5-mini (version 2025-08-07), 50K TPM
+        └── Deployment &quot;text-embedding-3-small&quot; → model text-embedding-3-small (v1), 50K TPM
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Word</th>
+<th>Meaning</th>
+<th>TrailForge</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>Resource</strong></td>
+<td>Your Azure OpenAI account: an endpoint like <code>https://trailforge-openai.openai.azure.com</code>, plus who&#39;s allowed to use it</td>
+<td>One per environment</td>
+</tr>
+<tr>
+<td><strong>Model</strong></td>
+<td>What OpenAI built (<code>gpt-5-mini</code>, <code>text-embedding-3-small</code>)</td>
+<td>Chosen per task</td>
+</tr>
+<tr>
+<td><strong>Deployment</strong></td>
+<td><em>Your</em> named instance of a model inside the resource, with its own capacity. <strong>In code, the &quot;model&quot; you pass is the deployment name.</strong></td>
+<td>We name deployments after the model to keep it simple</td>
+</tr>
+</tbody></table>
+<p><strong>A request, end to end in TrailForge:</strong></p>
+<pre><code>browser ─► gateway ─► assistant (OpenAI Agents SDK)
+                         │ new OpenAI({ baseURL: &lt;endpoint&gt;/openai/v1/, apiKey: &lt;key or Entra token&gt; })
+                         ▼
+          POST https://trailforge-openai.openai.azure.com/openai/v1/responses
+               body: { model: &quot;gpt-5-mini&quot;, input: [...], tools: [...] }    ← &quot;model&quot; = deployment name
+                         │  Azure checks: who are you (key/token)? allowed (role)? under quota (TPM)?
+                         │  content filter on the prompt → model → content filter on the output
+                         ▼
+          streamed tokens ─► assistant ─► SSE ─► browser
+</code></pre>
+<ul>
+<li><strong>The v1 endpoint</strong> (<code>/openai/v1/</code>) is OpenAI-compatible, so the normal <code>openai</code> npm package and the Agents SDK work unchanged. Only the <code>baseURL</code> and credentials differ. See <code>services/assistant/src/openai.ts</code>.</li>
+<li><strong>Responses API:</strong> the Agents SDK uses OpenAI&#39;s Responses API (<code>/responses</code>) by default. Embeddings use <code>/embeddings</code>.</li>
+<li><strong>Content filters</strong> run on every request (hate, violence, self-harm, sexual, jailbreak) and can block a prompt or answer with a <code>content_filter</code> error.</li>
+</ul>
+<h2>3. Authentication: why we use Entra ID (no keys)</h2>
+<table>
+<thead>
+<tr>
+<th></th>
+<th>API key</th>
+<th><strong>Microsoft Entra ID</strong> (recommended)</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>What you send</td>
+<td><code>api-key</code> header (a long-lived secret)</td>
+<td>A short-lived token (≈1 h) for <code>https://cognitiveservices.azure.com/.default</code></td>
+</tr>
+<tr>
+<td>Where it comes from</td>
+<td>Copied from the portal</td>
+<td>Your <code>az login</code> on a laptop; a <strong>Managed Identity</strong> in Azure</td>
+</tr>
+<tr>
+<td>If it leaks</td>
+<td>Works until someone rotates it</td>
+<td>Expires; tied to one identity</td>
+</tr>
+<tr>
+<td>Needs</td>
+<td>Nothing else</td>
+<td>A <strong>role</strong> on the resource: <strong>Cognitive Services OpenAI User</strong></td>
+</tr>
+</tbody></table>
+<p>TrailForge supports both: if <code>AZURE_OPENAI_API_KEY</code> is set it&#39;s used; otherwise <code>DefaultAzureCredential</code> picks up your <code>az login</code> (locally) or the Managed Identity (on Azure). <strong>Same code, no secrets in <code>.env</code>.</strong></p>
+<h2>4. Before you start</h2>
+<ul>
+<li>An Azure subscription where you can create resources (Owner, or Contributor + User Access Administrator, to assign roles).</li>
+<li>Azure CLI: <code>az login</code>, then <code>az account show -o table</code> to check the right subscription is selected (<code>az account set -s &lt;id&gt;</code> to switch).</li>
+<li>Pick a <strong>region</strong> that has both models. Check from the CLI:<pre><code class="language-bash">az cognitiveservices model list -l eastus2 \
+  --query &quot;[?model.name==&#39;gpt-5-mini&#39; || model.name==&#39;text-embedding-3-small&#39;].{model:model.name, version:model.version, sku:model.skus[0].name}&quot; -o table
+</code></pre>
+If <code>gpt-5-mini</code> isn&#39;t listed, try <code>swedencentral</code>, <code>eastus</code> or <code>westus3</code>.</li>
+<li>Check quota (tokens per minute you&#39;re allowed) in that region: <code>az cognitiveservices usage list -l eastus2 -o table</code>.</li>
+</ul>
+<h2>5. Set up in the Azure portal (to see every piece)</h2>
+<blockquote>
+<p>Portal labels change from time to time. If a button has moved, look for the same idea nearby.</p>
+</blockquote>
+<ol>
+<li><strong>Create a resource group.</strong> Portal → <em>Resource groups</em> → <em>Create</em> → name <code>rg-trailforge</code>, region <strong>East US 2</strong> → <em>Review + create</em>.</li>
+<li><strong>Create the Azure OpenAI resource.</strong> Portal → <em>Create a resource</em> → search <strong>&quot;Azure OpenAI&quot;</strong> → <em>Create</em>:<ul>
+<li>Resource group <code>rg-trailforge</code>, region East US 2</li>
+<li>Name <code>trailforge-openai-&lt;something unique&gt;</code> (this becomes your endpoint&#39;s subdomain)</li>
+<li>Pricing tier <strong>Standard S0</strong></li>
+<li>Network: <em>All networks</em> (fine for learning) → <em>Review + create</em>.</li>
+</ul>
+</li>
+<li><strong>Deploy the chat model.</strong> Open the resource → <em>Go to Azure AI Foundry portal</em> (or <a href="https://ai.azure.com">https://ai.azure.com</a>, select the resource) → <em>Deployments</em> → <em>Deploy model</em> → <em>Deploy base model</em> → <strong>gpt-5-mini</strong> → <em>Confirm</em>:<ul>
+<li>Deployment name <strong><code>gpt-5-mini</code></strong> (the name your code will use)</li>
+<li>Deployment type <strong>Global Standard</strong> (pay per token, routed to available capacity)</li>
+<li>Tokens per minute: start with <strong>50K</strong></li>
+</ul>
+</li>
+<li><strong>Deploy the embedding model</strong> the same way: <strong>text-embedding-3-small</strong>, deployment name <strong><code>text-embedding-3-small</code></strong>, Global Standard.</li>
+<li><strong>Give yourself access (Entra ID).</strong> Back on the resource in the Azure portal → <em>Access control (IAM)</em> → <em>Add</em> → <em>Add role assignment</em> → role <strong>Cognitive Services OpenAI User</strong> → <em>Members</em>: your user → <em>Review + assign</em>. Allow <strong>up to ~5–10 minutes</strong> before it takes effect.</li>
+<li><strong>Copy the endpoint.</strong> Resource → <em>Keys and Endpoint</em> (or <em>Resource Management → Keys and Endpoint</em>) → copy <strong>Endpoint</strong>, e.g. <code>https://trailforge-openai-xyz.openai.azure.com/</code>. You don&#39;t need the keys if you use Entra ID.</li>
+<li><em>(Optional)</em> <strong>Try it in the playground:</strong> Foundry → <em>Playgrounds → Chat</em> → pick <code>gpt-5-mini</code> → send a message.</li>
+</ol>
+<h2>6. The same setup with the Azure CLI</h2>
+<pre><code class="language-bash">RG=rg-trailforge
+LOC=eastus2
+AOAI=trailforge-openai-$RANDOM            # must be globally unique
+
+az group create -n $RG -l $LOC
+
+# The resource (kind OpenAI, standard tier, custom subdomain = endpoint name)
+az cognitiveservices account create -g $RG -n $AOAI -l $LOC \
+  --kind OpenAI --sku S0 --custom-domain $AOAI --yes
+
+# Chat deployment (capacity = thousands of tokens per minute)
+az cognitiveservices account deployment create -g $RG -n $AOAI \
+  --deployment-name gpt-5-mini --model-name gpt-5-mini --model-version 2025-08-07 \
+  --model-format OpenAI --sku-name GlobalStandard --sku-capacity 50
+
+# Embedding deployment
+az cognitiveservices account deployment create -g $RG -n $AOAI \
+  --deployment-name text-embedding-3-small --model-name text-embedding-3-small --model-version 1 \
+  --model-format OpenAI --sku-name GlobalStandard --sku-capacity 50
+
+# Let YOUR account call it with Entra ID (no keys)
+az role assignment create \
+  --assignee &quot;$(az ad signed-in-user show --query id -o tsv)&quot; \
+  --role &quot;Cognitive Services OpenAI User&quot; \
+  --scope &quot;$(az cognitiveservices account show -g $RG -n $AOAI --query id -o tsv)&quot;
+
+# The endpoint to put in .env
+az cognitiveservices account show -g $RG -n $AOAI --query properties.endpoint -o tsv
+az cognitiveservices account deployment list -g $RG -n $AOAI -o table
+</code></pre>
+<p>If the model version in the deployment command is rejected, use the version the <code>model list</code> command printed in §4. The agentic-ai course also has a Bicep template that creates all of this in one go (<code>infra/core.bicep</code>, run by <code>infra/provision-core.sh</code>).</p>
+<h2>7. Test it before touching the app</h2>
+<pre><code class="language-bash">ENDPOINT=$(az cognitiveservices account show -g $RG -n $AOAI --query properties.endpoint -o tsv)
+TOKEN=$(az account get-access-token --resource https://cognitiveservices.azure.com --query accessToken -o tsv)
+
+# Chat (the &quot;model&quot; is your DEPLOYMENT name)
+curl -s &quot;${ENDPOINT}openai/v1/chat/completions&quot; \
+  -H &quot;Authorization: Bearer $TOKEN&quot; -H &quot;content-type: application/json&quot; \
+  -d &#39;{&quot;model&quot;:&quot;gpt-5-mini&quot;,&quot;messages&quot;:[{&quot;role&quot;:&quot;user&quot;,&quot;content&quot;:&quot;Say hi in five words.&quot;}]}&#39; | jq -r &#39;.choices[0].message.content&#39;
+
+# Embeddings (should print 1536)
+curl -s &quot;${ENDPOINT}openai/v1/embeddings&quot; \
+  -H &quot;Authorization: Bearer $TOKEN&quot; -H &quot;content-type: application/json&quot; \
+  -d &#39;{&quot;model&quot;:&quot;text-embedding-3-small&quot;,&quot;input&quot;:&quot;waterproof tent&quot;}&#39; | jq &#39;.data[0].embedding | length&#39;
+</code></pre>
+<p>A <code>401</code>/<code>403</code> right after assigning the role usually means &quot;wait a few minutes&quot; (role propagation).</p>
+<h2>8. Connect TrailForge</h2>
+<p>Edit the root <code>.env</code> (all backend services and scripts read it):</p>
+<pre><code class="language-bash">AZURE_OPENAI_ENDPOINT=https://trailforge-openai-xyz.openai.azure.com
+AZURE_OPENAI_API_KEY=                                  # leave EMPTY → Entra ID via az login
+AZURE_OPENAI_CHAT_DEPLOYMENT=gpt-5-mini
+AZURE_OPENAI_EMBEDDING_DEPLOYMENT=text-embedding-3-small
+OPENAI_AGENTS_DISABLE_TRACING=true                     # don&#39;t send traces to platform.openai.com
+</code></pre>
+<p>Then restart the assistant (<code>npm run dev</code>, or <code>npm run dev:assistant</code>) and check:</p>
+<ol>
+<li><strong>Status:</strong> log in as admin → <code>GET /api/admin/assistant/status</code> shows <code>&quot;model&quot;: true</code> and both MCP servers connected.</li>
+<li><strong>Chat:</strong> open <a href="http://localhost:5173">http://localhost:5173</a>, open the chat widget, ask <em>&quot;What tents do you have under $400?&quot;</em> You should see a <code>search_products</code> tool card, then a streamed answer.</li>
+<li><strong>Logged-in flow:</strong> ask <em>&quot;Where is my order?&quot;</em> as a guest → you get a <strong>Log in</strong> button; log in as <code>demo@trailforge.example</code> → ask again.</li>
+</ol>
+<p><strong>What happens in the code:</strong></p>
+<ul>
+<li><code>services/assistant/src/openai.ts</code> builds the client: <code>baseURL = &lt;endpoint&gt;/openai/v1/</code>; <code>apiKey</code> is either your key or a <strong>token provider function</strong> (<code>getBearerTokenProvider(new DefaultAzureCredential(), &#39;https://cognitiveservices.azure.com/.default&#39;)</code>) that the SDK calls before each request.</li>
+<li><code>setDefaultOpenAIClient(client)</code> hands it to the Agents SDK; agents use <code>model: AZURE_OPENAI_CHAT_DEPLOYMENT</code>.</li>
+<li><code>scripts/rag/src/ingest.ts</code> uses the embedding deployment to embed RAG chunks (see the Azure AI Search guide).</li>
+</ul>
+<p><code>gpt-5-mini</code> is a <strong>reasoning model</strong>: it doesn&#39;t accept <code>temperature</code>. Use reasoning effort settings instead if you tune it.</p>
+<h2>9. Quotas, cost and regions</h2>
+<ul>
+<li><strong>TPM (tokens per minute)</strong> per deployment; requests per minute follows from it. Going over gives <strong>HTTP 429</strong>. The <code>openai</code> SDK retries automatically with back-off. Raise capacity on the deployment (Foundry → Deployments → Edit) or request more quota.</li>
+<li><strong>Cost:</strong> pay per token (input and output priced separately; embeddings are very cheap). Learning-scale use is typically a few dollars a month. Check current prices on the Azure OpenAI pricing page.</li>
+<li><strong>Deployment types:</strong> <em>Global Standard</em> processes in any Azure region (cheapest, most capacity). <em>Data Zone</em> keeps processing in a geography (US/EU). <em>Standard</em> keeps it in the resource&#39;s region. Choose based on data-residency needs.</li>
+<li><strong>Clean up</strong> when you stop practising: <code>az group delete -n rg-trailforge</code> (deletes everything in the group).</li>
+</ul>
+<h2>10. Troubleshooting</h2>
+<table>
+<thead>
+<tr>
+<th>Error</th>
+<th>Cause</th>
+<th>Fix</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>401</code> / <code>PermissionDenied</code> with Entra ID</td>
+<td>Role missing or not yet propagated</td>
+<td>Assign <strong>Cognitive Services OpenAI User</strong> on the resource; wait 5–10 min; <code>az login</code> again</td>
+</tr>
+<tr>
+<td><code>401</code> with a key</td>
+<td>Wrong or rotated key; or key auth disabled on the resource</td>
+<td>Copy the key again, or use Entra ID</td>
+</tr>
+<tr>
+<td><code>404 DeploymentNotFound</code></td>
+<td><code>AZURE_OPENAI_CHAT_DEPLOYMENT</code> doesn&#39;t match a deployment name</td>
+<td><code>az cognitiveservices account deployment list …</code> and fix <code>.env</code></td>
+</tr>
+<tr>
+<td><code>404</code> on every call</td>
+<td>Endpoint wrong (e.g. missing subdomain)</td>
+<td>Use the exact endpoint from <em>Keys and Endpoint</em>; the code adds <code>/openai/v1/</code></td>
+</tr>
+<tr>
+<td><code>429 Too Many Requests</code></td>
+<td>Over the deployment&#39;s TPM</td>
+<td>Wait/retry, raise capacity, or use a smaller prompt</td>
+</tr>
+<tr>
+<td><code>400 … temperature</code></td>
+<td>Reasoning model parameter</td>
+<td>Don&#39;t send <code>temperature</code> to <code>gpt-5-mini</code></td>
+</tr>
+<tr>
+<td><code>content_filter</code></td>
+<td>Prompt or output blocked</td>
+<td>Rephrase; check the content filter settings in Foundry</td>
+</tr>
+<tr>
+<td><code>DefaultAzureCredential failed to retrieve a token</code></td>
+<td>Not logged in</td>
+<td><code>az login</code> (and <code>az account set</code> to the right subscription)</td>
+</tr>
+<tr>
+<td>Assistant says &quot;not configured&quot;</td>
+<td><code>AZURE_OPENAI_ENDPOINT</code> empty when the assistant started</td>
+<td>Fill <code>.env</code>, restart the assistant</td>
+</tr>
+</tbody></table>
+<h2>11. Checklist</h2>
+<ul>
+<li><input disabled="" type="checkbox"> Region chosen where both models are available; quota checked</li>
+<li><input disabled="" type="checkbox"> Resource group + Azure OpenAI resource created</li>
+<li><input disabled="" type="checkbox"> Deployments <code>gpt-5-mini</code> and <code>text-embedding-3-small</code> created</li>
+<li><input disabled="" type="checkbox"> <strong>Cognitive Services OpenAI User</strong> assigned to my account</li>
+<li><input disabled="" type="checkbox"> <code>curl</code> chat + embeddings tests pass with an Entra token</li>
+<li><input disabled="" type="checkbox"> <code>.env</code> filled (no key), assistant restarted, <code>/api/admin/assistant/status</code> shows <code>model: true</code></li>
+<li><input disabled="" type="checkbox"> A product question streams an answer in the chat widget</li>
+</ul>
+<p>Next: <a href="azure-ai-search-rag-setup.html">Azure AI Search for RAG</a> · Related: <a href="deployment-plan.html">Deployment Plan</a> (Managed Identity on Azure) · <a href="mcp-guide.html">MCP Guide</a></p>
+</main></div></body></html>

@@ -123,7 +123,7 @@ Key rules:
   - climbing gear is non-returnable;
   - refunds ≤ $100 are approved automatically.
 
-Full contracts (ports, every endpoint, SSE events, data shapes) are in **`research/architecture.md`**. How the workspace runs: **`research/monorepo-guide.md`**. MCP servers: **`research/mcp-guide.md`**. The plan and phases are in **`research/implementation-plan.md`**.
+Full contracts (ports, every endpoint, SSE events, data shapes) are in **`research/architecture.md`**. How the workspace runs: **`research/monorepo-guide.md`**. MCP servers: **`research/mcp-guide.md`**. Azure setup: **`research/azure-openai-setup.md`**, **`research/azure-ai-search-rag-setup.md`**. The plan and phases are in **`research/implementation-plan.md`**.
 
 ## 7. Repository map
 
@@ -141,7 +141,7 @@ rag/knowledge/      47 handwritten docs (policies, privacy, about, stores, guide
 rag/products/       114 generated product docs (npm run rag:prepare)
 scripts/db          reset.ts, migrate.ts, seed.ts      scripts/rag   prepare.ts, ingest.ts
 scripts/smoke       api-smoke.mjs (21 end-to-end API checks)
-research/           application-context.md (this file), implementation-plan.md, architecture.md, deployment-plan.md, monorepo-guide.md, mcp-guide.md (+ .html)
+research/           application-context.md (this file), implementation-plan.md, architecture.md, deployment-plan.md, monorepo-guide.md, mcp-guide.md, azure-openai-setup.md, azure-ai-search-rag-setup.md (+ .html)
 ```
 
 ## 8. Commands & test data

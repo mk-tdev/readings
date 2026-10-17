@@ -188,7 +188,7 @@ export const searchKnowledge = tool({
     });
     const passages = [];
     for await (const r of results.results) passages.push(`[${r.document.source}#${r.document.chunkIndex}] ${r.document.section}\n${r.document.content}`);
-    return passages.length ? passages.join('\n---\n') : 'NO_RELEVANT_PASSAGES: say you don't know and offer support contact.';
+    return passages.length ? passages.join('\n---\n') : "NO_RELEVANT_PASSAGES: say you don't know and offer the support contact.";
   },
 });
 ```

@@ -305,7 +305,7 @@ export const searchKnowledge = tool({
     });
     const passages = [];
     for await (const r of results.results) passages.push(`[${r.document.source}#${r.document.chunkIndex}] ${r.document.section}\n${r.document.content}`);
-    return passages.length ? passages.join(&#39;\n---\n&#39;) : &#39;NO_RELEVANT_PASSAGES: say you don&#39;t know and offer support contact.&#39;;
+    return passages.length ? passages.join(&#39;\n---\n&#39;) : &quot;NO_RELEVANT_PASSAGES: say you don&#39;t know and offer the support contact.&quot;;
   },
 });
 </code></pre>

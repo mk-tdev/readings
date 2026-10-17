@@ -1,0 +1,607 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TrailForge: Implementation Plan</title>
+<style>
+:root{--bg:#fbfaf7;--fg:#1f2a24;--muted:#5b6b62;--line:#dfe3dc;--accent:#2f6b4f;--code:#f0f2ec;--soft:#eef3ee}
+@media (prefers-color-scheme:dark){:root{--bg:#121714;--fg:#e4ebe6;--muted:#9aa9a0;--line:#2b352f;--accent:#6fbf93;--code:#1b221e;--soft:#18211c}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.65 system-ui,-apple-system,"Segoe UI",sans-serif}
+.wrap{display:grid;grid-template-columns:240px minmax(0,1fr);min-height:100vh}
+nav{border-right:1px solid var(--line);padding:24px 16px;position:sticky;top:0;height:100vh;overflow:auto;background:var(--soft)}
+nav b{display:block;margin-bottom:12px;color:var(--accent)}nav a{display:block;padding:6px 8px;border-radius:6px;color:var(--fg);text-decoration:none;font-size:14px}
+nav a.on,nav a:hover{background:var(--bg);color:var(--accent)}
+main{max-width:900px;padding:40px 40px 100px}h1{font-size:30px;line-height:1.25}h2{margin-top:40px;padding-bottom:6px;border-bottom:1px solid var(--line)}
+a{color:var(--accent)}code{background:var(--code);padding:2px 5px;border-radius:4px;font-size:.88em}
+pre{background:var(--code);border:1px solid var(--line);border-radius:8px;padding:14px;overflow-x:auto;font-size:13px;line-height:1.5}pre code{padding:0;background:none}
+table{border-collapse:collapse;width:100%;font-size:14.5px;display:block;overflow-x:auto}th,td{border:1px solid var(--line);padding:7px 10px;text-align:left;vertical-align:top}th{background:var(--soft)}
+blockquote{margin:16px 0;padding:8px 16px;border-left:4px solid var(--accent);background:var(--soft);border-radius:0 8px 8px 0}
+@media (max-width:760px){.wrap{grid-template-columns:1fr}nav{position:static;height:auto;border-right:0;border-bottom:1px solid var(--line)}main{padding:24px 16px 80px}}
+</style></head><body><div class="wrap"><nav><a href="../" class="hub-link">← All readings</a><b>TrailForge research</b><a href="application-context.html" class="">TrailForge: Application Context</a><a href="architecture.html" class="">TrailForge: Architecture & Contracts</a><a href="deployment-plan.html" class="">TrailForge: Deployment Plan</a><a href="implementation-plan.html" class="on">TrailForge: Implementation Plan</a><a href="monorepo-guide.html" class="">Monorepo Guide: How the TrailForge Workspace Works</a></nav><main><h1>TrailForge: Implementation Plan</h1>
+<blockquote>
+<p>A full-stack outdoor &amp; hiking gear store built as microservices, with an agentic AI assistant made only with the <strong>OpenAI Agents SDK (JS)</strong>, with no orchestration framework. Learning project: every concept is implemented &quot;raw&quot; so you can see how it works.</p>
+<p><strong>Status legend:</strong> ✅ done · 🟡 in progress / partly done · ⬜ not started · 🔒 blocked (needs Azure)
+<strong>Last updated:</strong> 2026-10-17 · See also <a href="deployment-plan.html">Deployment Plan</a>, <a href="architecture.html">Architecture &amp; Contracts</a>, <a href="application-context.html">Application Context</a></p>
+</blockquote>
+<h2>1. Goals</h2>
+<ul>
+<li>A realistic e-commerce platform: browse, search, cart, checkout, register/login, order history, order tracking, returns, promotions, loyalty, plus an admin console.</li>
+<li><strong>Each business capability is its own microservice with its own PostgreSQL database.</strong></li>
+<li>An <strong>AI assistant</strong> that:<ul>
+<li>answers product, policy and promotion questions with <strong>Agentic RAG</strong> over <strong>Azure AI Search</strong>;</li>
+<li>knows whether the visitor is logged in, and asks them to log in for private questions (&quot;where is my order?&quot;);</li>
+<li>shows <strong>personal promotions</strong> for the logged-in customer and public ones for everyone;</li>
+<li>runs <strong>agentic workflows</strong>: automated refunds, promo matching, campaign drafting, restock proposals;</li>
+<li>is protected by layered <strong>guardrails</strong> (input, tool, RAG, output, human approval);</li>
+<li>is a <strong>standalone</strong> package that is embedded in the store as a widget <strong>and</strong> served as a full-screen chat app.</li>
+</ul>
+</li>
+<li>Repeatable test data: <code>npm run db:reset</code> scrubs and recreates everything (30 users, 100 orders).</li>
+<li>Uses every core concept from <a href="https://openai.github.io/openai-agents-js/">https://openai.github.io/openai-agents-js/</a>.</li>
+<li>Deployable: <strong>Next.js storefront on Vercel</strong>, <strong>everything else on Azure</strong>.</li>
+</ul>
+<h2>2. Architecture</h2>
+<pre><code> apps/web   (Next.js storefront + admin) :5173 ─┐  Server Components + BFF route handler (httpOnly cookie)
+ apps/chat  (React + Vite full-screen)   :5174 ─┤  both embed packages/chat-ui
+                                                │  REST + SSE
+                                                ▼
+ ┌──────────────────── services/gateway (BFF) :3000 ────────────────────┐
+ │  /api/* → routes to services, verifies JWT, aggregates, proxies chat   │
+ └──┬───────┬────────┬────────┬────────┬─────────┬─────────┬────────┬────┘
+    ▼       ▼        ▼        ▼        ▼         ▼         ▼        ▼
+ customer catalog inventory order  payment  promotion marketing  assistant
+  :4001   :4002    :4003    :4004   :4005    :4006     :4007     :4100
+    │       │        │        │        │         │         │        │  Agents SDK
+    ▼       ▼        ▼        ▼        ▼         ▼         ▼        ▼
+ tf_customer tf_catalog tf_inventory tf_order tf_payment tf_promotion tf_marketing tf_assistant
+ └──────── one PostgreSQL 17 server (Docker locally, Azure Flexible Server in the cloud) ────────┘
+
+ assistant ──► Azure OpenAI (chat + embeddings)
+           ──► Azure AI Search (indexes: tf-products, tf-knowledge)
+           ──► MCP servers (public catalog / promotions), Streamable HTTP
+           ──► services REST (private data, with the user&#39;s JWT)
+</code></pre>
+<h3>Design rules (the important lessons)</h3>
+<table>
+<thead>
+<tr>
+<th>Rule</th>
+<th>Why</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Database per service; no cross-database joins</td>
+<td>Real microservice boundary. Services talk over HTTP APIs.</td>
+</tr>
+<tr>
+<td>Orders store a snapshot of product name/price</td>
+<td>Orders must not change when the catalog changes.</td>
+</tr>
+<tr>
+<td>Identity comes from the verified JWT → Agents SDK <code>RunContext</code></td>
+<td>The LLM never decides <em>who</em> the user is, so prompt injection can&#39;t read another customer&#39;s data.</td>
+</tr>
+<tr>
+<td><strong>Services authorize every call themselves</strong></td>
+<td>This is the real security boundary. LLM guardrails are defence in depth on top of it.</td>
+</tr>
+<tr>
+<td>Public data through MCP, private data through function tools</td>
+<td>MCP servers are shared and stateless; private tools forward the user&#39;s token per request.</td>
+</tr>
+<tr>
+<td>Static knowledge in Azure AI Search; live data (stock, price, order status) from APIs</td>
+<td>The bot never quotes stale stock or prices.</td>
+</tr>
+<tr>
+<td>Workflows orchestrated in plain TypeScript; agents only where judgment is needed</td>
+<td>Deterministic, testable, auditable. No framework magic.</td>
+</tr>
+<tr>
+<td>Money-moving actions need policy checks, and above $100 a human</td>
+<td>Refunds are deterministic rules first, the model second.</td>
+</tr>
+</tbody></table>
+<h2>3. Monorepo layout</h2>
+<pre><code>trailforge/
+├── research/                 # plans + design docs (md + generated html)
+├── docker-compose.yml        # local postgres + pgadmin
+├── packages/
+│   ├── shared/               # config, db pool, migrations, http helpers, auth, service client, pricing, segments, policy constants
+│   └── chat-ui/              # React chat components: &lt;ChatWidget/&gt; and &lt;ChatPage/&gt;
+├── services/
+│   ├── gateway/              # BFF :3000
+│   ├── customer/             # auth, profile, addresses, loyalty, dev quick-login
+│   ├── catalog/              # products, variants, categories, reviews
+│   ├── inventory/            # stock, reservations, movements
+│   ├── order/                # orders, stages, items, shipments, returns, status history
+│   ├── payment/              # simulated payment provider: charges + refunds
+│   ├── promotion/            # promotions, rules, eligibility, redemptions
+│   ├── marketing/            # segments, campaigns, messages (inbox)
+│   └── assistant/            # OpenAI Agents SDK: agents, tools, guardrails, workflows, sessions
+├── apps/
+│   ├── web/                  # Next.js 16 (App Router) storefront + admin console  → Vercel
+│   └── chat/                 # React + Vite standalone full-screen chat app        → Azure Static Web Apps
+├── data/                     # seed source data (products.json, promotions.json)
+├── rag/                      # knowledge/*.md (51 handwritten) + products/*.md (114 generated)
+├── infra/                    # (Phase 11) Bicep for Azure + GitHub Actions workflows
+└── scripts/
+    ├── db/                   # reset / migrate / seed
+    ├── rag/                  # prepare + ingest into Azure AI Search
+    ├── smoke/                # API smoke test
+    └── evals/                # (Phases 8 &amp; 10) red-team + RAG quality evals
+</code></pre>
+<h2>4. Services</h2>
+<table>
+<thead>
+<tr>
+<th>Service</th>
+<th>Port</th>
+<th>Database tables</th>
+<th>Main endpoints</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>customer</td>
+<td>4001</td>
+<td>customers, addresses, loyalty_accounts, loyalty_events</td>
+<td>register, login, me, addresses, loyalty, dev quick-login</td>
+</tr>
+<tr>
+<td>catalog</td>
+<td>4002</td>
+<td>categories, products, variants, reviews</td>
+<td>list/search, product detail, reviews, variant lookup</td>
+</tr>
+<tr>
+<td>inventory</td>
+<td>4003</td>
+<td>stock_levels, reservations, movements</td>
+<td>stock lookup, reserve, commit, release, restock, admin stock</td>
+</tr>
+<tr>
+<td>order</td>
+<td>4004</td>
+<td>orders, order_items, shipments, returns, return_items, order_status_history</td>
+<td>quote, checkout saga, my orders, cancel, returns (+dry-run check), admin stages</td>
+</tr>
+<tr>
+<td>payment</td>
+<td>4005</td>
+<td>payments, refunds</td>
+<td>charge, idempotent refund, list by order</td>
+</tr>
+<tr>
+<td>promotion</td>
+<td>4006</td>
+<td>promotions, customer_offers, redemptions</td>
+<td>public promos, my offers, validate code, redeem, release</td>
+</tr>
+<tr>
+<td>marketing</td>
+<td>4007</td>
+<td>segments, customer_segments, campaigns, messages</td>
+<td>segments, campaigns, inbox, notify</td>
+</tr>
+<tr>
+<td>assistant</td>
+<td>4100</td>
+<td>conversations, conversation_items, pending_runs, traces, spans</td>
+<td>chat (SSE), history, approvals</td>
+</tr>
+<tr>
+<td>gateway</td>
+<td>3000</td>
+<td>none</td>
+<td><code>/api/*</code>, aggregation, SSE proxy</td>
+</tr>
+</tbody></table>
+<h2>5. Test data (scrub &amp; recreate anytime)</h2>
+<p><code>npm run db:reset</code> drops all <code>tf_*</code> databases → recreates → runs migrations → seeds. Deterministic (fixed faker seed):</p>
+<ul>
+<li><strong>30 customers</strong> (+1 admin): password <code>Password123!</code>, mixed loyalty tiers, birthdays, addresses. A <strong>Switch test account</strong> modal on <code>/login</code> logs in as any of them (dev only).</li>
+<li><strong>114 products</strong> across 10 categories with 527 size/color variants, specs and reviews.</li>
+<li><strong>100 orders</strong> over the last 12 months across every stage (preparing, on the way, delivered, cancelled, returned, partially returned), each with status history. Includes deliberate edge cases on the demo account (refund over $100, auto-refund, outside the return window, in transit, cancellable).</li>
+<li>Payments for every order, refunds for returned/cancelled ones.</li>
+<li><strong>Public promotions + targeted offers</strong> (VIP, birthday, lapsed customer, first order, campers).</li>
+<li>Marketing segments computed from order history.</li>
+</ul>
+<h2>6. Order lifecycle</h2>
+<pre><code>checkout:  pending ─(reserve stock → charge card → commit stock)─► preparing
+admin:     preparing ──► on_the_way (shipment + tracking) ──► delivered
+customer:  preparing ──cancel──► cancelled        (refund + restock + promo code released)
+returns:   delivered ──► partially_returned / returned   (refund = amount paid; ≤ $100 auto, else admin approval)
+</code></pre>
+<h2>7. RAG data (Azure AI Search)</h2>
+<table>
+<thead>
+<tr>
+<th>Index</th>
+<th>Source</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>tf-products</code></td>
+<td><code>rag/products/*.md</code>, generated from <code>data/products.json</code></td>
+<td>One doc per product, filterable category/brand/price/tags</td>
+</tr>
+<tr>
+<td><code>tf-knowledge</code></td>
+<td><code>rag/knowledge/*.md</code> (51 docs)</td>
+<td>Policies (refund, returns, cancellation, delivery &amp; order status, damaged/lost, shipping, warranty, privacy, terms, overview), about, stores, loyalty, promotions, size/care/buying guides, FAQs</td>
+</tr>
+</tbody></table>
+<p>Pipeline: <code>npm run rag:prepare</code> (render product docs) → <code>npm run rag:ingest</code> (chunk on headings → embed → upload). Never indexed: stock, prices, order data, customer reviews (user-generated = injection risk).</p>
+<h2>8. Chat behaviour</h2>
+<table>
+<thead>
+<tr>
+<th>Scenario</th>
+<th>Behaviour</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Anonymous: products, policies, public promos</td>
+<td>Full answers (RAG + public tools)</td>
+</tr>
+<tr>
+<td>Anonymous: &quot;my orders&quot;, &quot;my offers&quot;, refunds</td>
+<td>Tool returns <code>AUTH_REQUIRED</code> → UI shows a <strong>Log in</strong> button in the chat → after login the same conversation continues</td>
+</tr>
+<tr>
+<td>Logged in</td>
+<td>Personalised dynamic instructions; private tools enabled (orders, profile, offers, refunds)</td>
+</tr>
+<tr>
+<td>Logout mid-chat / another user</td>
+<td>A new conversation starts; history is never shown to a different person</td>
+</tr>
+<tr>
+<td>Guardrail trips</td>
+<td>Friendly refusal or safe fallback message; the event is logged for the admin</td>
+</tr>
+</tbody></table>
+<h2>9. Agents, workflows &amp; guardrails</h2>
+<p><strong>Multi-agent (LLM-orchestrated):</strong> <code>Concierge</code> (triage) → handoffs to <code>Product Expert</code>, <code>Order Support</code>, <code>Deals</code>.</p>
+<p><strong>Workflows (code-orchestrated):</strong></p>
+<ol>
+<li><strong>Refund:</strong> <code>/returns/check</code> rules → agent classifies the reason (structured output) → ≤ $100 auto-approve; larger ones pause with <code>needsApproval</code>, the serialized <code>RunState</code> is saved, an admin approves in the console and the run resumes → payment refund → restock → order update → inbox message.</li>
+<li><strong>Promo matching:</strong> profile + segments + cart fetched in parallel → promotion service decides eligibility → agent ranks and explains.</li>
+<li><strong>Campaign drafter (admin):</strong> segment → draft → output guardrail (no invented discounts) → approval → send.</li>
+<li><strong>Restock proposals:</strong> low-stock scan → agent proposes quantities → approval → restock.</li>
+</ol>
+<p><strong>Guardrail layers:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Layer</th>
+<th>SDK feature</th>
+<th>TrailForge checks</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>⓪ Service authorization</td>
+<td>(not the SDK) JWT → RunContext, services verify</td>
+<td>Customers only ever reach their own data</td>
+</tr>
+<tr>
+<td>① Input</td>
+<td><code>inputGuardrails</code> (<code>runInParallel: false</code> to block first)</td>
+<td>Secrets/PII regex; small-model classifier for off-topic, jailbreak, other-customer fishing; Azure content filters / Prompt Shields</td>
+</tr>
+<tr>
+<td>② Tool input</td>
+<td><code>defineToolInputGuardrail</code> (<code>allow</code> / <code>rejectContent</code> / <code>throwException</code>), MCP <code>toolInputGuardrails</code></td>
+<td>Refund ≤ <code>/returns/check</code> amount; max 2 money actions per conversation; order-number format</td>
+</tr>
+<tr>
+<td>③ Human approval</td>
+<td><code>needsApproval</code> + interruptions + <code>RunState</code></td>
+<td>Refunds &gt; $100, campaigns, restock</td>
+</tr>
+<tr>
+<td>④ Tool output (RAG)</td>
+<td><code>defineToolOutputGuardrail</code></td>
+<td>Relevance cutoff → &quot;I don&#39;t know&quot;; scan retrieved chunks for hidden instructions; record retrieved source ids in RunContext</td>
+</tr>
+<tr>
+<td>⑤ Output</td>
+<td><code>outputGuardrails</code></td>
+<td>Citations must be from this turn&#39;s retrieval; every $ amount / % / promo code must appear in tool outputs; optional grounding judge</td>
+</tr>
+</tbody></table>
+<p>Streaming caveat: output guardrails run after the full answer, so high-stakes answers aren&#39;t streamed, and a tripwire on a streamed answer sends a <code>guardrail</code> SSE event that replaces it.</p>
+<h2>10. Agents SDK concept map</h2>
+<table>
+<thead>
+<tr>
+<th>Concept</th>
+<th>Where</th>
+<th>Status</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Agent, instructions, modelSettings, <code>run</code>, agent loop, <code>maxTurns</code></td>
+<td>All agents</td>
+<td>✅</td>
+</tr>
+<tr>
+<td>Dynamic instructions (function)</td>
+<td>Before/after login personalisation</td>
+<td>✅</td>
+</tr>
+<tr>
+<td>Function tools (zod), error handling</td>
+<td>Public + private tools</td>
+<td>✅</td>
+</tr>
+<tr>
+<td>RunContext (local context)</td>
+<td>customerId, role, JWT: never sent to the LLM</td>
+<td>✅</td>
+</tr>
+<tr>
+<td>Sessions (custom Postgres session)</td>
+<td>Chat memory survives restarts and login</td>
+<td>✅</td>
+</tr>
+<tr>
+<td>Streaming events → SSE</td>
+<td>Text deltas, tool calls, auth prompts</td>
+<td>✅ (handoff events in Phase 7)</td>
+</tr>
+<tr>
+<td><code>isEnabled</code> on tools</td>
+<td>Admin-only tools hidden from customers</td>
+<td>⬜ Phase 7</td>
+</tr>
+<tr>
+<td>MCP servers (Streamable HTTP), tool filter, cache</td>
+<td>catalog / promotion MCP</td>
+<td>⬜ Phase 5</td>
+</tr>
+<tr>
+<td>Agents as tools (<code>asTool</code>)</td>
+<td>Product Expert used from Deals</td>
+<td>⬜ Phase 7</td>
+</tr>
+<tr>
+<td>Handoffs (<code>handoff()</code>, inputFilter, onHandoff, inputType)</td>
+<td>Concierge → specialists</td>
+<td>⬜ Phase 7</td>
+</tr>
+<tr>
+<td>Structured output (<code>outputType</code>)</td>
+<td>Classifiers, refund decision, ranked offers, campaign draft</td>
+<td>⬜ Phases 7–9</td>
+</tr>
+<tr>
+<td>Input / output / tool guardrails</td>
+<td>See §9</td>
+<td>⬜ Phase 8</td>
+</tr>
+<tr>
+<td>Human-in-the-loop (<code>needsApproval</code>, interruptions, <code>RunState</code> serialize/resume)</td>
+<td>Large refunds, campaigns, restock</td>
+<td>⬜ Phase 9</td>
+</tr>
+<tr>
+<td>Code vs LLM orchestration</td>
+<td>Workflows vs handoffs</td>
+<td>⬜ Phase 9</td>
+</tr>
+<tr>
+<td>Tracing (custom processor, <code>withTrace</code>, custom spans)</td>
+<td>Traces in Postgres + admin trace viewer</td>
+<td>⬜ Phase 10</td>
+</tr>
+<tr>
+<td>Lifecycle hooks / run events</td>
+<td>Audit log, token usage</td>
+<td>⬜ Phase 10</td>
+</tr>
+<tr>
+<td>Model providers / per-agent models</td>
+<td>Azure OpenAI; cheaper model for classifiers</td>
+<td>⬜ Phase 8</td>
+</tr>
+<tr>
+<td>Realtime voice agents</td>
+<td>&quot;Talk to support&quot; mic button</td>
+<td>⬜ Phase 12 (stretch)</td>
+</tr>
+</tbody></table>
+<h2>11. Tech stack</h2>
+<ul>
+<li>Node.js 24, TypeScript, npm workspaces</li>
+<li><strong>Express 5</strong> for every backend service, the gateway and the assistant</li>
+<li>zod, <code>pg</code> with <strong>plain SQL</strong> + SQL migration files (no ORM)</li>
+<li>Auth: JWT (<code>jose</code>), passwords hashed with Node&#39;s built-in <code>scrypt</code></li>
+<li><strong>Web app: Next.js 16 (App Router)</strong>, with Server Components, a catch-all Route Handler as BFF proxy, a <code>proxy.ts</code> route guard and auth in an httpOnly cookie → <strong>Vercel</strong></li>
+<li><strong>Chat app: React 19 + Vite</strong> SPA → <strong>Azure Static Web Apps</strong></li>
+<li><code>packages/chat-ui</code>: plain React components shared by both</li>
+<li>PostgreSQL 17 (Docker locally → <strong>Azure Database for PostgreSQL Flexible Server</strong>)</li>
+<li><strong>Azure:</strong> OpenAI, AI Search, Container Apps, Container Registry, Key Vault, Managed Identity, Log Analytics / Application Insights</li>
+</ul>
+<h2>12. Phases</h2>
+<h3>Overview</h3>
+<table>
+<thead>
+<tr>
+<th>#</th>
+<th>Phase</th>
+<th>Outcome</th>
+<th>Status</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>1</td>
+<td>Scaffold: monorepo, Docker Postgres, shared lib, migrations</td>
+<td><code>docker compose up</code> + <code>npm run db:reset</code></td>
+<td>✅</td>
+</tr>
+<tr>
+<td>2</td>
+<td>Microservices REST APIs + seed (30 users, 100 orders)</td>
+<td>Queryable data, smoke-tested</td>
+<td>✅</td>
+</tr>
+<tr>
+<td>3</td>
+<td>Next.js storefront, admin console, auth, order stages</td>
+<td>Working shop + admin</td>
+<td>✅</td>
+</tr>
+<tr>
+<td>4</td>
+<td>Azure AI foundation + RAG data, ingest &amp; eval set</td>
+<td>Search returns good results</td>
+<td>🟡 docs + scripts done · 🔒 Azure</td>
+</tr>
+<tr>
+<td>5</td>
+<td>Assistant core: search tools, MCP servers, streaming chat</td>
+<td>Pre-login Q&amp;A with citations</td>
+<td>🟡 skeleton done · 🔒 Azure</td>
+</tr>
+<tr>
+<td>6</td>
+<td>Login-aware chat &amp; memory</td>
+<td>Pre/post-login chat</td>
+<td>🟡 built · 🔒 needs live-model test</td>
+</tr>
+<tr>
+<td>7</td>
+<td>Multi-agent: handoffs, agents as tools, structured output</td>
+<td>Specialist agents</td>
+<td>⬜</td>
+</tr>
+<tr>
+<td>8</td>
+<td>Guardrails &amp; safety</td>
+<td>Layered protection + red-team eval</td>
+<td>⬜ (8a can start now)</td>
+</tr>
+<tr>
+<td>9</td>
+<td>Agentic workflows + human-in-the-loop</td>
+<td>Automated refunds, promos, campaigns, restock</td>
+<td>⬜</td>
+</tr>
+<tr>
+<td>10</td>
+<td>Observability &amp; evals</td>
+<td>Trace viewer, audit log, quality metrics</td>
+<td>⬜</td>
+</tr>
+<tr>
+<td>11</td>
+<td>Deployment: Azure + Vercel</td>
+<td>Live on the internet</td>
+<td>⬜ (see <a href="deployment-plan.html">Deployment Plan</a>)</td>
+</tr>
+<tr>
+<td>12</td>
+<td>Stretch: voice, extras</td>
+<td>Realtime voice support</td>
+<td>⬜</td>
+</tr>
+</tbody></table>
+<h3>Phase 1: Scaffold ✅</h3>
+<ul>
+<li><input checked="" disabled="" type="checkbox"> npm workspaces monorepo, TypeScript project references</li>
+<li><input checked="" disabled="" type="checkbox"> Docker Compose: Postgres 17 + pgAdmin, one database per service</li>
+<li><input checked="" disabled="" type="checkbox"> <code>@tf/shared</code>: config, db helpers, migration runner, <code>createService</code>, errors, auth, service client</li>
+<li><input checked="" disabled="" type="checkbox"> Research docs (plan, architecture) with an HTML renderer</li>
+</ul>
+<h3>Phase 2: Microservices + seed ✅</h3>
+<ul>
+<li><input checked="" disabled="" type="checkbox"> 7 domain services + gateway on Express 5 with plain SQL migrations</li>
+<li><input checked="" disabled="" type="checkbox"> Checkout saga (reserve → charge → commit, compensate on failure), idempotent refunds</li>
+<li><input checked="" disabled="" type="checkbox"> Promotion eligibility rules, segments, loyalty tiers</li>
+<li><input checked="" disabled="" type="checkbox"> Deterministic seed: 30 customers, 114 products, 100 orders, reviews, payments, returns</li>
+<li><input checked="" disabled="" type="checkbox"> <code>npm run db:reset</code> scrub &amp; recreate; API smoke test (21 checks)</li>
+</ul>
+<h3>Phase 3: Storefront, admin, auth ✅</h3>
+<ul>
+<li><input checked="" disabled="" type="checkbox"> Next.js 16 App Router storefront (Server Components, catalog, product, cart, checkout)</li>
+<li><input checked="" disabled="" type="checkbox"> httpOnly-cookie auth through a BFF route handler; <code>proxy.ts</code> route guard</li>
+<li><input checked="" disabled="" type="checkbox"> Register / login, account, orders, returns, offers, inbox</li>
+<li><input checked="" disabled="" type="checkbox"> Dev-only <strong>Switch test account</strong> modal (disabled in production)</li>
+<li><input checked="" disabled="" type="checkbox"> Order stages <strong>Preparing → On the way → Delivered</strong> with status history and a customer tracker</li>
+<li><input checked="" disabled="" type="checkbox"> Admin console: overview, all customers&#39; orders with stage controls, full inventory with restock, customers, approvals, order detail</li>
+<li><input checked="" disabled="" type="checkbox"> Refund = amount paid; safety-gear / final-sale rules; promo code released on cancel</li>
+<li><input checked="" disabled="" type="checkbox"> Standalone React + Vite chat app; shared <code>@tf/chat-ui</code></li>
+</ul>
+<h3>Phase 4: Azure AI foundation + RAG data 🟡</h3>
+<ul>
+<li><input checked="" disabled="" type="checkbox"> 51 knowledge docs (incl. refund, delivery, cancellation, damaged/lost, policies overview) + 114 generated product docs</li>
+<li><input checked="" disabled="" type="checkbox"> <code>rag:prepare</code> and <code>rag:ingest</code> scripts (heading-aware chunking, two indexes, vector + semantic config)</li>
+<li><input disabled="" type="checkbox"> 🔒 Provision Azure OpenAI (<code>gpt-5-mini</code>, <code>text-embedding-3-small</code>) + Azure AI Search; fill <code>.env</code></li>
+<li><input disabled="" type="checkbox"> 🔒 Run <code>rag:ingest</code>; check queries in Search Explorer (keyword vs vector vs hybrid)</li>
+<li><input disabled="" type="checkbox"> RAG eval set: ~30 questions with expected source docs; report hit@3</li>
+</ul>
+<h3>Phase 5: Assistant core 🟡</h3>
+<ul>
+<li><input checked="" disabled="" type="checkbox"> Assistant service: one agent, 7 tools, Postgres session, SSE protocol, gateway proxy</li>
+<li><input checked="" disabled="" type="checkbox"> Chat widget in the store + full-screen chat app</li>
+<li><input disabled="" type="checkbox"> <code>search_knowledge</code> tool (hybrid search + semantic ranker, citations <code>[source#chunk]</code>)</li>
+<li><input disabled="" type="checkbox"> <code>search_products</code> on <code>tf-products</code> with filters (category, price, tags) + live stock/price check</li>
+<li><input disabled="" type="checkbox"> MCP servers for catalog + public promotions (Streamable HTTP), connected with <code>connectMcpServers</code></li>
+<li><input disabled="" type="checkbox"> 🔒 Verify token-by-token streaming end to end with a live model</li>
+</ul>
+<h3>Phase 6: Login-aware chat &amp; memory 🟡</h3>
+<ul>
+<li><input checked="" disabled="" type="checkbox"> <code>AUTH_REQUIRED</code> tool result → <code>auth_required</code> SSE event → Log in button in the chat</li>
+<li><input checked="" disabled="" type="checkbox"> Guest conversation adopted on login; other users get a fresh conversation</li>
+<li><input checked="" disabled="" type="checkbox"> Dynamic instructions per user; history endpoint for the UI</li>
+<li><input disabled="" type="checkbox"> 🔒 Live-model test of the whole pre-login → login → continue flow</li>
+<li><input disabled="" type="checkbox"> Session trimming (keep the last N turns) to control token cost</li>
+</ul>
+<h3>Phase 7: Multi-agent ⬜</h3>
+<ul>
+<li><input disabled="" type="checkbox"> Concierge triage agent with <code>handoff()</code> to Product Expert, Order Support, Deals (inputFilter, onHandoff, typed inputType)</li>
+<li><input disabled="" type="checkbox"> Product Expert exposed to Deals via <code>asTool()</code></li>
+<li><input disabled="" type="checkbox"> Structured output (zod <code>outputType</code>) for classifiers and recommendations</li>
+<li><input disabled="" type="checkbox"> <code>agent</code> / handoff SSE events shown in the chat UI</li>
+<li><input disabled="" type="checkbox"> Admin-only tools gated with <code>isEnabled</code></li>
+</ul>
+<h3>Phase 8: Guardrails &amp; safety ⬜</h3>
+<ul>
+<li><input disabled="" type="checkbox"> <strong>8a. Deterministic (no Azure needed):</strong> secrets/PII input regex; order-number + rate-limit tool guardrails; citation and invented-number/promo-code output checks; <code>guardrail</code> SSE event + chat UI notice</li>
+<li><input disabled="" type="checkbox"> <strong>8b. Model-based:</strong> small-model input classifier (off-topic, jailbreak, other-customer data) with <code>runInParallel: false</code>; optional grounding judge; Azure content filters / Prompt Shields</li>
+<li><input disabled="" type="checkbox"> <strong>8c. RAG:</strong> relevance cutoff → &quot;I don&#39;t know&quot;; injection scan on retrieved chunks (tool output guardrail); retrieved ids tracked in RunContext; low-trust content kept out of the index</li>
+<li><input disabled="" type="checkbox"> <strong>8d. Red-team eval:</strong> ~30 attack prompts with expected outcomes (<code>scripts/evals/guardrails.ts</code>), run in CI</li>
+<li><input disabled="" type="checkbox"> Guardrail trips logged to <code>traces</code>; doc <code>research/guardrails.md</code></li>
+</ul>
+<h3>Phase 9: Agentic workflows + human-in-the-loop ⬜</h3>
+<ul>
+<li><input disabled="" type="checkbox"> Refund workflow: <code>/returns/check</code> → reason classifier → auto ≤ $100 → <code>needsApproval</code> above → <code>RunState</code> saved in <code>pending_runs</code> → admin approves → resume → refund</li>
+<li><input disabled="" type="checkbox"> Assistant tools: cancel order, start return (with tool guardrails from Phase 8)</li>
+<li><input disabled="" type="checkbox"> Promo matching workflow (parallel fetch → rank → explain)</li>
+<li><input disabled="" type="checkbox"> Campaign drafter (admin) with output guardrail + approval → send</li>
+<li><input disabled="" type="checkbox"> Restock proposals from low stock → approval → restock</li>
+<li><input disabled="" type="checkbox"> Optional: automatic order-stage simulator (preparing → on the way → delivered on a timer)</li>
+</ul>
+<h3>Phase 10: Observability &amp; evals ⬜</h3>
+<ul>
+<li><input disabled="" type="checkbox"> Custom tracing processor → Postgres <code>traces</code>/<code>spans</code>; <code>withTrace</code> + custom spans around workflows</li>
+<li><input disabled="" type="checkbox"> Admin trace viewer (runs, tool calls, guardrail trips, token usage)</li>
+<li><input disabled="" type="checkbox"> Lifecycle hooks: audit log of money-moving actions</li>
+<li><input disabled="" type="checkbox"> Quality evals: RAG hit rate, answer groundedness, workflow success rate; dashboards in Application Insights (prod)</li>
+</ul>
+<h3>Phase 11: Deployment ⬜ (details in <a href="deployment-plan.html">Deployment Plan</a>)</h3>
+<ul>
+<li><input disabled="" type="checkbox"> Production config changes (gateway CORS allow-list, BFF shared secret, chat app API base URL, runtime <code>GATEWAY_URL</code>)</li>
+<li><input disabled="" type="checkbox"> Azure infrastructure as code (Bicep): Postgres Flexible Server, Container Apps env, ACR, Key Vault, Managed Identity, OpenAI, AI Search, Static Web Apps, monitoring</li>
+<li><input disabled="" type="checkbox"> Container images for 9 services; migration job; RAG ingest job</li>
+<li><input disabled="" type="checkbox"> Next.js storefront on Vercel (monorepo root <code>apps/web</code>), env vars, preview → staging</li>
+<li><input disabled="" type="checkbox"> React chat app on Azure Static Web Apps</li>
+<li><input disabled="" type="checkbox"> GitHub Actions CI/CD; custom domains; go-live checklist</li>
+</ul>
+<h3>Phase 12: Stretch ⬜</h3>
+<ul>
+<li><input disabled="" type="checkbox"> Realtime voice agent (&quot;talk to support&quot;)</li>
+<li><input disabled="" type="checkbox"> Recommendation agent from order history; review summarisation (low-trust content handled safely)</li>
+<li><input disabled="" type="checkbox"> Multi-instance hardening: Redis for sessions/rate limits, autoscaling tests</li>
+</ul>
+</main></div></body></html>

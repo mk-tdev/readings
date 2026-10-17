@@ -1,0 +1,369 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TrailForge: Application Context</title>
+<style>
+:root{--bg:#fbfaf7;--fg:#1f2a24;--muted:#5b6b62;--line:#dfe3dc;--accent:#2f6b4f;--code:#f0f2ec;--soft:#eef3ee}
+@media (prefers-color-scheme:dark){:root{--bg:#121714;--fg:#e4ebe6;--muted:#9aa9a0;--line:#2b352f;--accent:#6fbf93;--code:#1b221e;--soft:#18211c}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.65 system-ui,-apple-system,"Segoe UI",sans-serif}
+.wrap{display:grid;grid-template-columns:240px minmax(0,1fr);min-height:100vh}
+nav{border-right:1px solid var(--line);padding:24px 16px;position:sticky;top:0;height:100vh;overflow:auto;background:var(--soft)}
+nav b{display:block;margin-bottom:12px;color:var(--accent)}nav a{display:block;padding:6px 8px;border-radius:6px;color:var(--fg);text-decoration:none;font-size:14px}
+nav a.on,nav a:hover{background:var(--bg);color:var(--accent)}
+main{max-width:900px;padding:40px 40px 100px}h1{font-size:30px;line-height:1.25}h2{margin-top:40px;padding-bottom:6px;border-bottom:1px solid var(--line)}
+a{color:var(--accent)}code{background:var(--code);padding:2px 5px;border-radius:4px;font-size:.88em}
+pre{background:var(--code);border:1px solid var(--line);border-radius:8px;padding:14px;overflow-x:auto;font-size:13px;line-height:1.5}pre code{padding:0;background:none}
+table{border-collapse:collapse;width:100%;font-size:14.5px;display:block;overflow-x:auto}th,td{border:1px solid var(--line);padding:7px 10px;text-align:left;vertical-align:top}th{background:var(--soft)}
+blockquote{margin:16px 0;padding:8px 16px;border-left:4px solid var(--accent);background:var(--soft);border-radius:0 8px 8px 0}
+@media (max-width:760px){.wrap{grid-template-columns:1fr}nav{position:static;height:auto;border-right:0;border-bottom:1px solid var(--line)}main{padding:24px 16px 80px}}
+</style></head><body><div class="wrap"><nav><a href="../" class="hub-link">← All readings</a><b>TrailForge research</b><a href="application-context.html" class="on">TrailForge: Application Context</a><a href="architecture.html" class="">TrailForge: Architecture & Contracts</a><a href="deployment-plan.html" class="">TrailForge: Deployment Plan</a><a href="implementation-plan.html" class="">TrailForge: Implementation Plan</a><a href="monorepo-guide.html" class="">Monorepo Guide: How the TrailForge Workspace Works</a></nav><main><h1>TrailForge: Application Context</h1>
+<blockquote>
+<p>Paste or reference this file at the start of a new chat so the assistant knows what we&#39;re building, why, how it&#39;s structured, where it stands, and the rules to follow.
+Repo: <a href="https://github.com/mk-tdev/trailforge">https://github.com/mk-tdev/trailforge</a> (private) · Local: <code>~/workspace/learning/trailforge</code>
+Companion course repo: <a href="https://github.com/mk-tdev/agentic-ai">https://github.com/mk-tdev/agentic-ai</a> (fundamentals: Agents SDK, Azure OpenAI, AI Search, MCP, RAG)</p>
+</blockquote>
+<hr>
+<h2>1. What we are building</h2>
+<p><strong>TrailForge</strong> is a fictional <strong>outdoor &amp; hiking gear e-commerce store</strong> built as a realistic full-stack system:</p>
+<ul>
+<li>A <strong>Next.js storefront + admin console</strong> where customers browse, search, buy, track orders, request returns and see promotions.</li>
+<li><strong>Independent Node.js + Express microservices</strong>, each owning its own <strong>PostgreSQL</strong> database: customer, catalog, inventory, order, payment, promotion, marketing. A gateway (BFF) sits in front of them.</li>
+<li>An <strong>agentic AI assistant</strong> (its own service) built <em>only</em> with the <strong>OpenAI Agents SDK for JavaScript</strong>, running on <strong>Azure OpenAI</strong>, using <strong>Azure AI Search</strong> for agentic RAG. It is a <strong>standalone chat package</strong> that is:<ul>
+<li>embedded as a <strong>chat widget</strong> inside the Next.js store, and</li>
+<li>served as a <strong>full-screen chat app</strong> (React + Vite).</li>
+</ul>
+</li>
+</ul>
+<p>The assistant must:</p>
+<ul>
+<li><p>Answer questions about <strong>products, policies, and public promotions</strong> for anonymous visitors.</p>
+</li>
+<li><p><strong>Know whether the user is logged in.</strong> For private questions (orders, account, personal offers, refunds) it prompts the user to log in, then continues the same conversation afterwards.</p>
+</li>
+<li><p>Show <strong>personal promotions</strong> based on the logged-in customer: tier, birthday, segments, first order.</p>
+</li>
+<li><p>Run <strong>agentic workflows</strong>:</p>
+<ul>
+<li>automated refunds, with human approval above $100;</li>
+<li>promo matching;</li>
+<li>marketing campaign drafting;</li>
+<li>restock proposals.</li>
+</ul>
+<p>Each workflow talks to the other microservices.</p>
+</li>
+</ul>
+<h2>2. Why we are building it</h2>
+<p>This is a <strong>learning project</strong>. The goal is to learn agentic AI the <em>realistic</em> way: inside a messy, multi-service business system with real data, auth, policies and edge cases, not in a toy demo.</p>
+<ul>
+<li><strong>No agent orchestration frameworks</strong> (no LangGraph, LangChain, CrewAI, etc.). Every concept is implemented &quot;raw&quot; with the <strong>OpenAI Agents SDK</strong> (<a href="https://openai.github.io/openai-agents-js/">https://openai.github.io/openai-agents-js/</a>) and plain TypeScript, so the mechanics are visible.</li>
+<li>Every Agents SDK concept should be used somewhere real (see §5).</li>
+<li>Repeatable data: the whole world can be scrubbed and recreated anytime (<code>npm run db:reset</code>).</li>
+<li>Everything is documented as we go (<code>research/</code>) so the user can study it.</li>
+</ul>
+<p>The user is a developer <strong>learning these topics as a beginner</strong>. They know they need Node/TypeScript refreshers. Explanations should be clear and in plain language, and code should be readable with useful comments.</p>
+<h2>3. Learning objectives</h2>
+<p>By the end, the user should be able to explain and build:</p>
+<ol>
+<li><strong>Microservices fundamentals:</strong> database-per-service, service-to-service HTTP calls, an API gateway/BFF, sagas with compensating actions (checkout), idempotency (refunds), and data snapshots (order items).</li>
+<li><strong>Auth across services:</strong> JWT issued by the customer service and verified by every service; trusted internal calls (<code>x-internal-token</code>); httpOnly-cookie BFF (Next.js) vs localStorage token (Vite SPA).</li>
+<li><strong>OpenAI Agents SDK, end to end:</strong> agents, tools, MCP, handoffs, guardrails, sessions, streaming, structured output, human-in-the-loop, tracing (full map in §5).</li>
+<li><strong>Agentic RAG with Azure AI Search:</strong><ul>
+<li>data preparation and chunking;</li>
+<li>two indexes (products, knowledge);</li>
+<li>hybrid search (BM25 + vectors + RRF);</li>
+<li>semantic ranker and filters;</li>
+<li>citations;</li>
+<li>an eval set.</li>
+</ul>
+</li>
+<li><strong>Static vs live data:</strong> facts that change (stock, prices, order status, promos) come from APIs at answer time; static knowledge comes from the search index.</li>
+<li><strong>Security in agent systems:</strong><ul>
+<li>identity comes from RunContext, never from LLM arguments;</li>
+<li>prompt-injection awareness;</li>
+<li>least-privilege tools;</li>
+<li>approval gates for money-moving actions.</li>
+</ul>
+</li>
+<li><strong>MCP servers:</strong> exposing public catalog and promotions over Streamable HTTP.</li>
+<li><strong>Azure:</strong> Azure OpenAI (deployments, Entra ID auth), Azure AI Search, and later Azure Container Apps + Azure Database for PostgreSQL.</li>
+</ol>
+<h2>4. Technology stack</h2>
+<table>
+<thead>
+<tr>
+<th>Layer</th>
+<th>Technology</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Language/runtime</td>
+<td><strong>TypeScript</strong>, <strong>Node.js 24</strong>, npm workspaces monorepo</td>
+</tr>
+<tr>
+<td>Backend services</td>
+<td><strong>Express 5</strong>, zod validation, <code>pg</code> with <strong>plain SQL</strong> + SQL migration files (no ORM), <code>jose</code> JWT, Node <code>scrypt</code> password hashing</td>
+</tr>
+<tr>
+<td>Database</td>
+<td><strong>PostgreSQL 17</strong> in Docker (one container, one database per service) + pgAdmin</td>
+</tr>
+<tr>
+<td>Web app</td>
+<td><strong>Next.js 16 (App Router)</strong>: Server Components, Route Handlers, a <code>proxy.ts</code> route guard, auth in an httpOnly cookie</td>
+</tr>
+<tr>
+<td>Chat app</td>
+<td><strong>React 19 + Vite</strong> SPA</td>
+</tr>
+<tr>
+<td>Shared chat UI</td>
+<td><code>packages/chat-ui</code>: React components (<code>ChatWidget</code>, <code>ChatPage</code>, <code>useChat</code>), manual SSE parsing</td>
+</tr>
+<tr>
+<td>AI</td>
+<td><strong>OpenAI Agents SDK (<code>@openai/agents</code> 0.20)</strong>, <code>openai</code> SDK, <strong>Azure OpenAI</strong> (<code>gpt-5-mini</code>, <code>text-embedding-3-small</code>) through the v1 endpoint, Entra ID via <code>@azure/identity</code></td>
+</tr>
+<tr>
+<td>Retrieval</td>
+<td><strong>Azure AI Search</strong> (<code>@azure/search-documents</code>): indexes <code>tf-products</code>, <code>tf-knowledge</code></td>
+</tr>
+<tr>
+<td>Tools protocol</td>
+<td><strong>MCP</strong> (<code>@modelcontextprotocol/sdk</code>, Streamable HTTP)</td>
+</tr>
+<tr>
+<td>Seed data</td>
+<td><code>@faker-js/faker</code> with a fixed seed (deterministic)</td>
+</tr>
+</tbody></table>
+<h2>5. OpenAI Agents SDK concept map (target)</h2>
+<table>
+<thead>
+<tr>
+<th>Concept</th>
+<th>Where it is or will be used</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Agent, instructions, modelSettings, <code>run</code>, agent loop, <code>maxTurns</code></td>
+<td>All agents</td>
+</tr>
+<tr>
+<td><strong>Dynamic instructions</strong></td>
+<td>Before/after login personalisation ✅</td>
+</tr>
+<tr>
+<td><strong>Function tools</strong> (zod), <code>isEnabled</code>, tool errors</td>
+<td>Public + private tools ✅</td>
+</tr>
+<tr>
+<td><strong>RunContext</strong> (local context, never sent to the LLM)</td>
+<td>Customer identity + JWT ✅</td>
+</tr>
+<tr>
+<td><strong>Custom Session</strong> (Postgres)</td>
+<td>Conversation memory ✅</td>
+</tr>
+<tr>
+<td><strong>Streaming events → SSE</strong></td>
+<td>Chat ✅</td>
+</tr>
+<tr>
+<td>MCP servers (Streamable HTTP), tool filtering</td>
+<td>Catalog / promotion MCP</td>
+</tr>
+<tr>
+<td>Agents as tools (<code>asTool</code>)</td>
+<td>Product Expert used by Deals</td>
+</tr>
+<tr>
+<td><strong>Handoffs</strong> (<code>handoff()</code>, inputFilter, onHandoff, inputType)</td>
+<td>Concierge → Product Expert / Order Support / Deals</td>
+</tr>
+<tr>
+<td>Structured output (<code>outputType</code>)</td>
+<td>Refund decision, ranked offers, campaign draft</td>
+</tr>
+<tr>
+<td>Input / output / tool guardrails</td>
+<td>Off-topic/abuse, PII, invented discounts, refund caps</td>
+</tr>
+<tr>
+<td><strong>Human-in-the-loop</strong> (<code>needsApproval</code>, interruptions, <code>RunState</code> serialize/resume)</td>
+<td>Refunds &gt; $100, campaigns, restock</td>
+</tr>
+<tr>
+<td>Code vs LLM orchestration</td>
+<td>Workflows (code) vs handoffs (LLM)</td>
+</tr>
+<tr>
+<td>Tracing (custom processor, <code>withTrace</code>, custom spans)</td>
+<td>Traces in Postgres + admin trace viewer</td>
+</tr>
+<tr>
+<td>Lifecycle hooks / run events</td>
+<td>Audit log, token usage</td>
+</tr>
+<tr>
+<td>Per-agent models</td>
+<td>Cheaper model for classifiers/guardrails</td>
+</tr>
+<tr>
+<td>Realtime voice agents (stretch)</td>
+<td>&quot;Talk to support&quot;</td>
+</tr>
+</tbody></table>
+<h2>6. Architecture (summary)</h2>
+<pre><code>apps/web  (Next.js :5173) ── /api/[...path] BFF (cookie → Bearer) ─┐
+apps/chat (Vite    :5174) ── Vite proxy /api (localStorage token) ─┤
+                                                                   ▼
+                          services/gateway (Express :3000) /api/*
+   ┌──────────┬──────────┬───────────┬────────┬─────────┬───────────┬───────────┬───────────┐
+customer:4001 catalog:4002 inventory:4003 order:4004 payment:4005 promotion:4006 marketing:4007 assistant:4100
+   └─ each owns its own database: tf_customer, tf_catalog, … tf_assistant (Postgres :5432) ─┘
+assistant → Azure OpenAI, Azure AI Search, MCP servers, other services (REST, with the user&#39;s JWT)
+</code></pre>
+<p>Key rules:</p>
+<ul>
+<li><strong>No cross-database access at runtime.</strong> Services call each other&#39;s APIs. Only the seed script writes to all databases.</li>
+<li><strong>Money is integer cents.</strong> JSON is camelCase; SQL is snake_case.</li>
+<li><strong>Identity comes from the verified JWT</strong> and lives in the Agents SDK RunContext. Customer ids are never tool parameters.</li>
+<li><strong>Private tools stay enabled for guests but return <code>AUTH_REQUIRED</code>.</strong> The server then emits an <code>auth_required</code> SSE event, and the UI shows a Log in button.</li>
+<li><strong>Order stages after placement:</strong> <code>preparing → on_the_way → delivered</code> (admin advances them; history in <code>order_status_history</code>). Checkout commits inventory; cancel and return restock it.</li>
+<li><strong>The return policy</strong> lives in <code>packages/shared/src/types.ts</code> (<code>RETURN_POLICY</code>):<ul>
+<li>60 days from delivery; electronics 30 days;</li>
+<li>climbing gear is non-returnable;</li>
+<li>refunds ≤ $100 are approved automatically.</li>
+</ul>
+</li>
+</ul>
+<p>Full contracts (ports, every endpoint, SSE events, data shapes) are in <strong><code>research/architecture.md</code></strong>. The plan and phases are in <strong><code>research/implementation-plan.md</code></strong>.</p>
+<h2>7. Repository map</h2>
+<pre><code>packages/shared     config, db (pool/one/many/tx), migrate, auth, http (createService), errors,
+                    service client, pricing (priceOrder), segments (segmentsFor/tierFor), types
+packages/chat-ui    ChatWidget, ChatPanel, ChatPage, useChat, SSE parser, styles (tfc- prefix)
+services/&lt;name&gt;     src/index.ts (Express) + migrations/*.sql
+services/assistant  src/agent.ts, context.ts, session.ts (PostgresSession), tools/public.ts, tools/private.ts
+apps/web            Next.js: app/, components/, lib/gateway.ts (server-only), proxy.ts, app/api/session, app/api/[...path]
+apps/chat           Vite React full-screen chat
+data/               products.json (114 products, 527 variants), promotions.json (13 promos)
+rag/knowledge/      47 handwritten docs (policies, privacy, about, stores, guides, FAQs)
+rag/products/       114 generated product docs (npm run rag:prepare)
+scripts/db          reset.ts, migrate.ts, seed.ts      scripts/rag   prepare.ts, ingest.ts
+scripts/smoke       api-smoke.mjs (21 end-to-end API checks)
+research/           application-context.md (this file), implementation-plan.md, architecture.md (+ .html)
+</code></pre>
+<h2>8. Commands &amp; test data</h2>
+<pre><code class="language-bash">npm run db:up          # Postgres + pgAdmin (Docker)
+npm run db:reset       # drop/recreate all DBs + migrate + seed (deterministic)
+npm run dev            # all services + assistant + web (5173) + chat (5174)
+node scripts/smoke/api-smoke.mjs
+npm run rag:prepare &amp;&amp; npm run rag:ingest   # needs Azure config in .env
+npm run typecheck &amp;&amp; npm run build -w @tf/web
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Account</th>
+<th>Password</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>demo@trailforge.example</code> (Alex Rivera, Gold)</td>
+<td><code>Password123!</code></td>
+<td>Edge-case orders: refund &gt; $100 (needs approval), refund ≤ $100 (auto), outside the return window, in transit, cancellable. Birthday this month.</td>
+</tr>
+<tr>
+<td><code>admin@trailforge.example</code></td>
+<td><code>Admin123!</code></td>
+<td>One admin console (<code>/admin</code>): overview, all customers&#39; orders with stage controls, full inventory with restock, customers, approvals</td>
+</tr>
+<tr>
+<td>29 other customers (<code>…@example.com</code>)</td>
+<td><code>Password123!</code></td>
+<td>Personas: heavy, regular, occasional, lapsed, no orders</td>
+</tr>
+</tbody></table>
+<p>Seed: 30 customers + 1 admin, 114 products, 100 orders over 12 months, payments, shipments, returns and refunds, reviews, loyalty tiers and segments computed from the order history, inbox messages, campaigns.</p>
+<h2>9. Current status (as of 2026-10-17)</h2>
+<p>Full checklist per phase: <strong><code>research/implementation-plan.md</code> §12</strong>. Deployment (Vercel + Azure): <strong><code>research/deployment-plan.md</code></strong>.</p>
+<table>
+<thead>
+<tr>
+<th>Phase</th>
+<th>State</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>1. Scaffold</td>
+<td>✅</td>
+</tr>
+<tr>
+<td>2. Microservices + seed</td>
+<td>✅</td>
+</tr>
+<tr>
+<td>3. Next.js storefront, admin console, auth, order stages</td>
+<td>✅</td>
+</tr>
+<tr>
+<td>4. Azure AI foundation + RAG data/ingest/eval</td>
+<td>🟡 docs + scripts done · 🔒 Azure not provisioned</td>
+</tr>
+<tr>
+<td>5. Assistant core (search tools, MCP, streaming)</td>
+<td>🟡 skeleton done</td>
+</tr>
+<tr>
+<td>6. Login-aware chat &amp; memory</td>
+<td>🟡 built, needs live-model test</td>
+</tr>
+<tr>
+<td>7. Multi-agent (handoffs, agents as tools, structured output)</td>
+<td>⬜</td>
+</tr>
+<tr>
+<td>8. Guardrails &amp; safety (8a deterministic can start now)</td>
+<td>⬜</td>
+</tr>
+<tr>
+<td>9. Agentic workflows + human-in-the-loop</td>
+<td>⬜</td>
+</tr>
+<tr>
+<td>10. Observability &amp; evals</td>
+<td>⬜</td>
+</tr>
+<tr>
+<td>11. Deployment: Next.js → Vercel, everything else → Azure</td>
+<td>⬜</td>
+</tr>
+<tr>
+<td>12. Stretch (voice etc.)</td>
+<td>⬜</td>
+</tr>
+</tbody></table>
+<p><strong>Blockers / next steps:</strong></p>
+<ol>
+<li>Provision Azure OpenAI (<code>gpt-5-mini</code>, <code>text-embedding-3-small</code>) and Azure AI Search, then fill <code>AZURE_OPENAI_ENDPOINT</code> and <code>AZURE_SEARCH_ENDPOINT</code> in <code>.env</code>. Keys are optional: Entra ID via <code>az login</code> works.</li>
+<li><code>npm run rag:ingest</code>, then add a <code>search_knowledge</code> tool (hybrid search with citations) to the assistant.</li>
+<li>Phase 5: MCP servers for catalog + promotions. Phase 7: Concierge + specialist agents with handoffs and guardrails.</li>
+</ol>
+<p><strong>Known gaps:</strong></p>
+<ul>
+<li>Token-by-token chat streaming isn&#39;t proven yet (no model is connected).</li>
+<li>Many knowledge docs are short (avg ~360 words) and could be expanded.</li>
+<li>A missing order page under <code>/account/orders/...</code> returns 200 with a not-found page instead of a 404.</li>
+</ul>
+<h2>10. Working agreements for the assistant (next chat)</h2>
+<ul>
+<li>Use <strong>only the OpenAI Agents SDK</strong> for agent logic. No LangGraph or similar.</li>
+<li>Keep backend services on <strong>Express 5</strong>, the web app on <strong>Next.js 16</strong>, and the chat app on <strong>React + Vite</strong>.</li>
+<li>Respect <strong>service boundaries</strong>: no cross-database queries; add an endpoint instead.</li>
+<li>Follow the existing helpers in <code>@tf/shared</code> (<code>createService</code>, <code>one</code>/<code>many</code>/<code>tx</code>, <code>services.&lt;name&gt;()</code>, <code>HttpError</code>).</li>
+<li>Update <code>research/architecture.md</code> when the API or SSE contract changes, then run <code>npm run research:html</code>.</li>
+<li>Verify against the installed package types in <code>node_modules</code> before using an SDK API. Run the smoke test after backend changes.</li>
+<li>Explain concepts for a beginner and keep code comments educational.</li>
+<li>Commit or push only when asked. GitHub account: <code>mk-tdev</code>.</li>
+</ul>
+</main></div></body></html>

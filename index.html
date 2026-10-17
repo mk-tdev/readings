@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Readings</title>
+<meta name="description" content="Learning notes, guides and plans from my projects.">
+<style>
+:root{--bg:#fbfaf7;--fg:#1f2a24;--muted:#5b6b62;--line:#dfe3dc;--accent:#2f6b4f;--soft:#eef3ee;--card:#ffffff}
+@media (prefers-color-scheme:dark){:root{--bg:#121714;--fg:#e4ebe6;--muted:#9aa9a0;--line:#2b352f;--accent:#6fbf93;--soft:#18211c;--card:#161d19}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.6 system-ui,-apple-system,"Segoe UI",sans-serif}
+main{max-width:960px;margin:0 auto;padding:56px 16px 80px}
+h1{font-size:clamp(28px,5vw,40px);line-height:1.15;margin:0 0 8px;letter-spacing:-.02em}
+.lead{color:var(--muted);margin:0 0 36px;max-width:60ch}
+h2{font-size:13px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin:32px 0 12px}
+.modules{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px}
+.module{display:flex;flex-direction:column;gap:10px;padding:20px;border:1px solid var(--line);border-radius:14px;background:var(--card);color:inherit;text-decoration:none;transition:border-color .15s,transform .15s}
+.module:hover{border-color:var(--accent);transform:translateY(-1px)}
+.module h3{margin:0;font-size:20px}
+.module p{margin:0;color:var(--muted);font-size:15px}
+.tags{display:flex;flex-wrap:wrap;gap:6px;margin-top:auto}
+.tags span{font-size:12px;font-weight:600;padding:2px 9px;border-radius:999px;background:var(--soft);color:var(--accent)}
+.docs{list-style:none;margin:4px 0 0;padding:0;display:grid;gap:2px;font-size:14px}
+.docs a{color:var(--accent)}
+.empty{border-style:dashed;color:var(--muted);justify-content:center;text-align:center}
+footer{margin-top:56px;color:var(--muted);font-size:13px}
+footer a{color:var(--accent)}
+</style>
+</head>
+<body>
+<main>
+  <h1>Readings</h1>
+  <p class="lead">Learning notes, implementation plans and guides from my projects, in one place. Each module is a self-contained set of pages.</p>
+
+  <h2>Modules</h2>
+  <div class="modules">
+    <article class="module">
+      <a href="trailforge/" style="color:inherit;text-decoration:none"><h3>TrailForge →</h3></a>
+      <p>Microservices e-commerce store with an agentic AI assistant: OpenAI Agents SDK, Azure OpenAI, Azure AI Search, MCP, Next.js, Express, PostgreSQL.</p>
+      <ul class="docs">
+        <li><a href="trailforge/application-context.html">Application context</a></li>
+        <li><a href="trailforge/implementation-plan.html">Implementation plan</a></li>
+        <li><a href="trailforge/architecture.html">Architecture &amp; contracts</a></li>
+        <li><a href="trailforge/deployment-plan.html">Deployment plan</a></li>
+        <li><a href="trailforge/monorepo-guide.html">Monorepo guide</a></li>
+      </ul>
+      <div class="tags"><span>Agents SDK</span><span>RAG</span><span>Azure</span><span>Next.js</span><span>Microservices</span></div>
+    </article>
+    <div class="module empty"><p>More modules coming: add a folder and a card here.</p></div>
+  </div>
+
+  <footer>Source: <a href="https://github.com/mk-tdev/readings">github.com/mk-tdev/readings</a></footer>
+</main>
+</body>
+</html>

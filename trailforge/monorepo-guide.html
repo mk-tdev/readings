@@ -1,0 +1,507 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Monorepo Guide: How the TrailForge Workspace Works</title>
+<style>
+:root{--bg:#fbfaf7;--fg:#1f2a24;--muted:#5b6b62;--line:#dfe3dc;--accent:#2f6b4f;--code:#f0f2ec;--soft:#eef3ee}
+@media (prefers-color-scheme:dark){:root{--bg:#121714;--fg:#e4ebe6;--muted:#9aa9a0;--line:#2b352f;--accent:#6fbf93;--code:#1b221e;--soft:#18211c}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.65 system-ui,-apple-system,"Segoe UI",sans-serif}
+.wrap{display:grid;grid-template-columns:240px minmax(0,1fr);min-height:100vh}
+nav{border-right:1px solid var(--line);padding:24px 16px;position:sticky;top:0;height:100vh;overflow:auto;background:var(--soft)}
+nav b{display:block;margin-bottom:12px;color:var(--accent)}nav a{display:block;padding:6px 8px;border-radius:6px;color:var(--fg);text-decoration:none;font-size:14px}
+nav a.on,nav a:hover{background:var(--bg);color:var(--accent)}
+main{max-width:900px;padding:40px 40px 100px}h1{font-size:30px;line-height:1.25}h2{margin-top:40px;padding-bottom:6px;border-bottom:1px solid var(--line)}
+a{color:var(--accent)}code{background:var(--code);padding:2px 5px;border-radius:4px;font-size:.88em}
+pre{background:var(--code);border:1px solid var(--line);border-radius:8px;padding:14px;overflow-x:auto;font-size:13px;line-height:1.5}pre code{padding:0;background:none}
+table{border-collapse:collapse;width:100%;font-size:14.5px;display:block;overflow-x:auto}th,td{border:1px solid var(--line);padding:7px 10px;text-align:left;vertical-align:top}th{background:var(--soft)}
+blockquote{margin:16px 0;padding:8px 16px;border-left:4px solid var(--accent);background:var(--soft);border-radius:0 8px 8px 0}
+@media (max-width:760px){.wrap{grid-template-columns:1fr}nav{position:static;height:auto;border-right:0;border-bottom:1px solid var(--line)}main{padding:24px 16px 80px}}
+</style></head><body><div class="wrap"><nav><a href="../" class="hub-link">← All readings</a><b>TrailForge research</b><a href="application-context.html" class="">TrailForge: Application Context</a><a href="architecture.html" class="">TrailForge: Architecture & Contracts</a><a href="deployment-plan.html" class="">TrailForge: Deployment Plan</a><a href="implementation-plan.html" class="">TrailForge: Implementation Plan</a><a href="monorepo-guide.html" class="on">Monorepo Guide: How the TrailForge Workspace Works</a></nav><main><h1>Monorepo Guide: How the TrailForge Workspace Works</h1>
+<blockquote>
+<p>Your reference for how this repository is organised, how its packages find each other, how it runs, and how to manage it day to day.
+Applies to: npm workspaces (npm 11, Node 24), TypeScript project references, Next.js, Vite.</p>
+</blockquote>
+<h2>1. The big idea in one minute</h2>
+<p>TrailForge is <strong>one Git repository that holds 15 small Node.js packages</strong> (services, apps, shared libraries, scripts). This setup is called a <strong>monorepo</strong>. Two features make it work:</p>
+<ol>
+<li><strong>npm workspaces</strong>: npm treats every folder matched by the <code>workspaces</code> patterns as a package. One <code>npm install</code> at the root installs everything, and packages can import each other by name (<code>import { createService } from &#39;@tf/shared&#39;</code>) <strong>without publishing anything to npm</strong>.</li>
+<li><strong>TypeScript project references</strong>: <code>tsc -b</code> type-checks and builds the backend packages in the right order (shared first, then the services that use it).</li>
+</ol>
+<pre><code>trailforge/                       ← the &quot;root&quot; (workspace root). You run commands here.
+├── package.json                  ← lists the workspaces + root scripts (npm run dev, db:reset…)
+├── package-lock.json             ← ONE lockfile for every package
+├── node_modules/                 ← ONE dependency folder for every package
+│   ├── express/, pg/, next/ …    ← third-party packages, installed once (&quot;hoisted&quot;)
+│   └── @tf/                      ← symlinks to our own packages
+│       ├── shared  → ../../packages/shared
+│       ├── order   → ../../services/order
+│       └── …
+├── packages/*   services/*   apps/*   scripts/*      ← the workspace packages
+</code></pre>
+<h2>2. What the <code>workspaces</code> patterns match</h2>
+<pre><code class="language-json">&quot;workspaces&quot;: [&quot;packages/*&quot;, &quot;services/*&quot;, &quot;apps/*&quot;, &quot;scripts/*&quot;]
+</code></pre>
+<p>Each pattern means &quot;every direct sub-folder that has a <code>package.json</code> is a package&quot;. Today that&#39;s 15:</p>
+<table>
+<thead>
+<tr>
+<th>Folder</th>
+<th>Package name</th>
+<th>What it is</th>
+<th>Runs with</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>packages/shared</code></td>
+<td><code>@tf/shared</code></td>
+<td>Backend library: config, db, migrations, auth, HTTP helpers, service client, pricing, policy constants</td>
+<td>imported by others; never runs alone</td>
+</tr>
+<tr>
+<td><code>packages/chat-ui</code></td>
+<td><code>@tf/chat-ui</code></td>
+<td>React chat components (<code>ChatWidget</code>, <code>ChatPage</code>, <code>useChat</code>)</td>
+<td>imported by both front-ends</td>
+</tr>
+<tr>
+<td><code>services/gateway</code></td>
+<td><code>@tf/gateway</code></td>
+<td>Express BFF, port 3000</td>
+<td><code>tsx watch</code></td>
+</tr>
+<tr>
+<td><code>services/customer</code></td>
+<td><code>@tf/customer</code></td>
+<td>Express, 4001, db <code>tf_customer</code></td>
+<td><code>tsx watch</code></td>
+</tr>
+<tr>
+<td><code>services/catalog</code></td>
+<td><code>@tf/catalog</code></td>
+<td>Express, 4002</td>
+<td><code>tsx watch</code></td>
+</tr>
+<tr>
+<td><code>services/inventory</code></td>
+<td><code>@tf/inventory</code></td>
+<td>Express, 4003</td>
+<td><code>tsx watch</code></td>
+</tr>
+<tr>
+<td><code>services/order</code></td>
+<td><code>@tf/order</code></td>
+<td>Express, 4004</td>
+<td><code>tsx watch</code></td>
+</tr>
+<tr>
+<td><code>services/payment</code></td>
+<td><code>@tf/payment</code></td>
+<td>Express, 4005</td>
+<td><code>tsx watch</code></td>
+</tr>
+<tr>
+<td><code>services/promotion</code></td>
+<td><code>@tf/promotion</code></td>
+<td>Express, 4006</td>
+<td><code>tsx watch</code></td>
+</tr>
+<tr>
+<td><code>services/marketing</code></td>
+<td><code>@tf/marketing</code></td>
+<td>Express, 4007</td>
+<td><code>tsx watch</code></td>
+</tr>
+<tr>
+<td><code>services/assistant</code></td>
+<td><code>@tf/assistant</code></td>
+<td>Express + OpenAI Agents SDK, 4100</td>
+<td><code>tsx watch</code></td>
+</tr>
+<tr>
+<td><code>apps/web</code></td>
+<td><code>@tf/web</code></td>
+<td>Next.js 16 storefront + admin, 5173</td>
+<td><code>next dev</code></td>
+</tr>
+<tr>
+<td><code>apps/chat</code></td>
+<td><code>@tf/chat</code></td>
+<td>React + Vite full-screen chat, 5174</td>
+<td><code>vite</code></td>
+</tr>
+<tr>
+<td><code>scripts/db</code></td>
+<td><code>@tf/db-scripts</code></td>
+<td>reset / migrate / seed</td>
+<td><code>tsx</code> (one-off)</td>
+</tr>
+<tr>
+<td><code>scripts/rag</code></td>
+<td><code>@tf/rag-scripts</code></td>
+<td>RAG prepare / ingest</td>
+<td><code>tsx</code> (one-off)</td>
+</tr>
+</tbody></table>
+<p>The <strong>package name</strong> (from each folder&#39;s <code>package.json</code>, e.g. <code>&quot;name&quot;: &quot;@tf/order&quot;</code>) is what you use with <code>-w</code>. It doesn&#39;t have to match the folder name: <code>scripts/db</code> is <code>@tf/db-scripts</code>. <code>@tf</code> is just a <strong>scope</strong> that groups our packages and avoids clashing with real npm packages.</p>
+<p>Folders that are <strong>not</strong> workspaces: <code>data/</code>, <code>rag/</code>, <code>research/</code>, <code>infra/</code>, <code>scripts/smoke/</code> (no <code>package.json</code>; it&#39;s a plain <code>.mjs</code> you run with <code>node</code>).</p>
+<h2>3. What <code>npm install</code> does here</h2>
+<p>Run it <strong>once, at the root</strong>:</p>
+<ol>
+<li>Reads every workspace&#39;s <code>package.json</code> and works out one dependency tree.</li>
+<li><strong>Hoists</strong> shared third-party packages to the root <code>node_modules/</code>. <code>express</code> is listed in 10 packages but installed once. If two packages needed incompatible versions, npm would put the odd one in that package&#39;s own <code>node_modules/</code>.</li>
+<li><strong>Symlinks</strong> each workspace into <code>node_modules/@tf/&lt;name&gt;</code>. That&#39;s why <code>import … from &#39;@tf/shared&#39;</code> works: Node looks in <code>node_modules</code>, finds the symlink, and follows it to <code>packages/shared</code>.</li>
+<li>Writes <strong>one</strong> <code>package-lock.json</code> at the root. Commit it; it pins exact versions for everyone (and for Vercel/Azure builds).</li>
+</ol>
+<p>You can see the symlinks yourself:</p>
+<pre><code class="language-bash">ls -la node_modules/@tf/
+# shared -&gt; ../../packages/shared
+# order  -&gt; ../../services/order …
+</code></pre>
+<p><strong><code>&quot;@tf/shared&quot;: &quot;*&quot;</code></strong>: in a service&#39;s <code>dependencies</code>, <code>*</code> means &quot;any version&quot;. Because a workspace with that name exists, npm links the local folder instead of downloading from the registry.</p>
+<h2>4. How our packages import each other</h2>
+<h3>Backend: <code>@tf/shared</code> → services and scripts</h3>
+<p><code>packages/shared/package.json</code> uses <strong>conditional exports</strong>:</p>
+<pre><code class="language-json">&quot;exports&quot;: {
+  &quot;.&quot;: {
+    &quot;development&quot;: &quot;./src/index.ts&quot;,   ← used in dev (tsx --conditions=development)
+    &quot;types&quot;: &quot;./dist/index.d.ts&quot;,      ← used by TypeScript when building
+    &quot;default&quot;: &quot;./dist/index.js&quot;       ← used in production (plain node)
+  }
+}
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Situation</th>
+<th>Command</th>
+<th><code>@tf/shared</code> resolves to</th>
+<th>Needs a build first?</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Local dev</td>
+<td><code>tsx watch --conditions=development … src/index.ts</code></td>
+<td><code>packages/shared/src/index.ts</code> (TypeScript source)</td>
+<td><strong>No.</strong> Edit shared, and the service picks it up.</td>
+</tr>
+<tr>
+<td>Scripts</td>
+<td><code>tsx --conditions=development src/seed.ts</code></td>
+<td>source</td>
+<td>No</td>
+</tr>
+<tr>
+<td>Production</td>
+<td><code>node dist/index.js</code></td>
+<td><code>packages/shared/dist/index.js</code> (compiled)</td>
+<td><strong>Yes:</strong> <code>npm run typecheck</code> (<code>tsc -b</code>) first</td>
+</tr>
+</tbody></table>
+<p><code>tsx</code> is a TypeScript runner: it compiles <code>.ts</code> on the fly, so in dev nothing needs building. <code>tsx watch</code> restarts the service when a file it imports changes, including files in <code>packages/shared/src</code>.</p>
+<h3>Front-end: <code>@tf/chat-ui</code> → <code>@tf/web</code> and <code>@tf/chat</code></h3>
+<p><code>@tf/chat-ui</code> ships <strong>TypeScript source only</strong> (<code>&quot;exports&quot;: { &quot;.&quot;: &quot;./src/index.ts&quot; }</code>), with no build step. The apps compile it themselves:</p>
+<ul>
+<li><strong>Next.js:</strong> <code>transpilePackages: [&#39;@tf/chat-ui&#39;]</code> in <code>apps/web/next.config.ts</code> tells Next to compile code from that package.</li>
+<li><strong>Vite:</strong> compiles linked TypeScript packages out of the box.</li>
+</ul>
+<p>React is a <strong>peer dependency</strong> of chat-ui (<code>peerDependencies</code>): chat-ui uses whatever React the app has installed, so there&#39;s only one React instance (two copies break hooks).</p>
+<pre><code>            @tf/shared ◄──────────── services/* , scripts/*
+          (backend lib)                (import &#39;@tf/shared&#39;)
+
+            @tf/chat-ui ◄──────────── apps/web (Next.js) , apps/chat (Vite)
+          (React components)            (import &#39;@tf/chat-ui&#39;)
+</code></pre>
+<p>Rule: <strong>backend packages never import front-end packages and vice versa.</strong> <code>@tf/shared</code> uses <code>pg</code>/<code>express</code>, which can&#39;t run in a browser.</p>
+<h2>5. TypeScript setup</h2>
+<table>
+<thead>
+<tr>
+<th>File</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>tsconfig.base.json</code></td>
+<td>Shared compiler settings for <strong>backend</strong> packages (strict, <code>NodeNext</code> modules, <code>composite: true</code>)</td>
+</tr>
+<tr>
+<td><code>tsconfig.json</code> (root)</td>
+<td>No code of its own; just a list of <strong>references</strong> to every backend package</td>
+</tr>
+<tr>
+<td><code>&lt;package&gt;/tsconfig.json</code></td>
+<td><code>extends</code> the base, sets <code>rootDir: src</code> / <code>outDir: dist</code>, and <strong>references</strong> packages it depends on (services reference <code>../../packages/shared</code>)</td>
+</tr>
+<tr>
+<td><code>apps/web/tsconfig.json</code>, <code>apps/chat/tsconfig.json</code>, <code>packages/chat-ui/tsconfig.json</code></td>
+<td>Front-end settings (<code>moduleResolution: bundler</code>, JSX, <code>noEmit</code>); the bundler builds them, so they&#39;re <strong>not</strong> in the root references</td>
+</tr>
+</tbody></table>
+<p><code>npm run typecheck</code> runs <strong><code>tsc -b</code></strong> (&quot;build mode&quot;):</p>
+<ul>
+<li>reads the root references, builds <code>packages/shared</code> <strong>first</strong>, then each service, in dependency order;</li>
+<li>writes <code>dist/</code> folders (git-ignored) plus <code>*.tsbuildinfo</code> files so the next run only rebuilds what changed.</li>
+</ul>
+<p>Front-ends are checked separately:</p>
+<pre><code class="language-bash">npm run typecheck -w @tf/web
+npm run typecheck -w @tf/chat
+npm run typecheck -w @tf/chat-ui
+</code></pre>
+<h2>6. Configuration (.env)</h2>
+<ul>
+<li><strong>One <code>.env</code> file at the root</strong> for all backend services and scripts. Each <code>dev</code>/<code>start</code> script passes it with Node&#39;s built-in flag: <code>--env-file-if-exists=../../.env</code> (the path is relative to the package folder, where npm runs the script).</li>
+<li><code>.env.example</code> is the committed template; <code>.env</code> is git-ignored.</li>
+<li>Settings are validated once in <code>packages/shared/src/config.ts</code> (zod) with sensible local defaults, so most things work even with an empty <code>.env</code>.</li>
+<li><strong>Next.js does not read the root <code>.env</code>.</strong> It reads <code>apps/web/.env*</code> files. Today it relies on defaults (<code>GATEWAY_URL=http://localhost:3000</code>). On Vercel you set its variables in the project settings.</li>
+<li><strong>Vite</strong> reads <code>apps/chat/.env*</code> and only exposes variables prefixed <code>VITE_</code>.</li>
+</ul>
+<h2>7. How the project runs</h2>
+<h3>The root scripts (run from the repo root)</h3>
+<table>
+<thead>
+<tr>
+<th>Command</th>
+<th>What it does</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>npm install</code></td>
+<td>Install everything (see §3)</td>
+</tr>
+<tr>
+<td><code>npm run db:up</code> / <code>db:down</code></td>
+<td>Start / stop Postgres + pgAdmin in Docker</td>
+</tr>
+<tr>
+<td><code>npm run db:reset</code></td>
+<td>Drop + recreate all 8 databases, migrate, seed (destructive)</td>
+</tr>
+<tr>
+<td><code>npm run db:migrate</code></td>
+<td>Apply pending SQL migrations only (safe)</td>
+</tr>
+<tr>
+<td><code>npm run db:seed</code></td>
+<td>Re-seed without dropping databases</td>
+</tr>
+<tr>
+<td><code>npm run dev</code></td>
+<td><strong>Everything</strong>: 8 services + assistant + web + chat</td>
+</tr>
+<tr>
+<td><code>npm run dev:services</code></td>
+<td>Only the 7 domain services + gateway</td>
+</tr>
+<tr>
+<td><code>npm run dev:assistant</code> / <code>dev:web</code> / <code>dev:chat</code></td>
+<td>One part</td>
+</tr>
+<tr>
+<td><code>npm run typecheck</code></td>
+<td><code>tsc -b</code> over all backend packages</td>
+</tr>
+<tr>
+<td><code>npm run rag:prepare</code> / <code>rag:ingest</code></td>
+<td>RAG data pipeline</td>
+</tr>
+<tr>
+<td><code>npm run research:html</code></td>
+<td>Re-render <code>research/*.md</code> to HTML</td>
+</tr>
+<tr>
+<td><code>node scripts/smoke/api-smoke.mjs</code></td>
+<td>End-to-end API test (modifies data)</td>
+</tr>
+</tbody></table>
+<h3>How <code>npm run dev</code> fans out</h3>
+<pre><code>npm run dev
+ └─ concurrently  (one terminal, coloured prefixes per process)
+     ├─ npm run dev:services
+     │    └─ concurrently
+     │        ├─ npm run dev -w @tf/customer   → tsx watch … src/index.ts   :4001
+     │        ├─ npm run dev -w @tf/catalog    → …                          :4002
+     │        ├─ …inventory, order, payment, promotion, marketing           :4003–4007
+     │        └─ npm run dev -w @tf/gateway                                 :3000
+     ├─ npm run dev:assistant                                               :4100
+     ├─ npm run dev:web    → next dev -p 5173
+     └─ npm run dev:chat   → vite --port 5174
+</code></pre>
+<ul>
+<li><code>-w @tf/order</code> (short for <code>--workspace=@tf/order</code>) means &quot;run this command <strong>inside</strong> that package&quot;. npm switches into its folder and uses its <code>scripts</code>.</li>
+<li><code>concurrently</code> runs several commands in one terminal. Each line is prefixed with a name (<code>[ord]</code>, <code>[gw]</code>…). <strong>Ctrl+C stops all of them.</strong></li>
+<li><code>&quot;npm:dev -w @tf/customer&quot;</code> is concurrently&#39;s shorthand for <code>npm run dev -w @tf/customer</code>.</li>
+</ul>
+<h3>Each package&#39;s own scripts</h3>
+<table>
+<thead>
+<tr>
+<th>Script</th>
+<th>Backend services</th>
+<th><code>apps/web</code></th>
+<th><code>apps/chat</code></th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>dev</code></td>
+<td><code>tsx watch --conditions=development --env-file-if-exists=../../.env src/index.ts</code></td>
+<td><code>next dev -p 5173</code></td>
+<td><code>vite --port 5174</code></td>
+</tr>
+<tr>
+<td><code>build</code></td>
+<td><code>tsc -b</code></td>
+<td><code>next build</code></td>
+<td><code>tsc --noEmit &amp;&amp; vite build</code></td>
+</tr>
+<tr>
+<td><code>start</code></td>
+<td><code>node --env-file-if-exists=../../.env dist/index.js</code> (needs a build)</td>
+<td><code>next start -p 5173</code></td>
+<td>(static files; serve <code>dist/</code>)</td>
+</tr>
+<tr>
+<td><code>typecheck</code></td>
+<td>via root <code>npm run typecheck</code></td>
+<td><code>tsc --noEmit</code></td>
+<td><code>tsc --noEmit</code></td>
+</tr>
+</tbody></table>
+<h2>8. Day-to-day recipes</h2>
+<h3>Run or restart one service</h3>
+<pre><code class="language-bash">npm run dev -w @tf/order          # just the order service
+</code></pre>
+<p>If the whole stack is running under <code>npm run dev</code>, you don&#39;t restart anything: <code>tsx watch</code>, Next and Vite reload on save.</p>
+<h3>Add a dependency to ONE package</h3>
+<pre><code class="language-bash">npm install zod -w @tf/order                 # runtime dependency
+npm install -D @types/uuid -w @tf/order      # dev dependency
+npm install marked -w @tf/chat-ui
+</code></pre>
+<p>This updates that package&#39;s <code>package.json</code> and the root lockfile. <strong>Always run from the root with <code>-w</code></strong>, not by <code>cd</code>-ing into the folder.</p>
+<h3>Add a tool to the whole repo (root dev dependency)</h3>
+<pre><code class="language-bash">npm install -D prettier                      # no -w → goes into the root package.json
+</code></pre>
+<h3>Remove or upgrade</h3>
+<pre><code class="language-bash">npm uninstall pg -w @tf/catalog
+npm install next@latest -w @tf/web
+npm outdated --workspaces                    # what&#39;s out of date, per package
+</code></pre>
+<h3>Run a script in several packages</h3>
+<pre><code class="language-bash">npm run build --workspaces --if-present      # every package that has a &quot;build&quot; script
+npm run typecheck -w @tf/web -w @tf/chat     # several specific packages
+</code></pre>
+<h3>See which packages use something</h3>
+<pre><code class="language-bash">npm ls @tf/shared                            # who depends on our shared package
+npm ls express                               # where express is installed / which versions
+</code></pre>
+<h3>Add a new microservice (example: <code>reviews</code> on port 4008)</h3>
+<ol>
+<li>Copy a small service as a template: <code>cp -R services/payment services/reviews</code>, then delete its <code>dist/</code> and <code>migrations/</code> contents.</li>
+<li>In <code>services/reviews/package.json</code> set <code>&quot;name&quot;: &quot;@tf/reviews&quot;</code>.</li>
+<li>Register it in <code>packages/shared/src/config.ts</code> → <code>SERVICES</code> (<code>reviews: { port: 4008, db: &#39;tf_reviews&#39; }</code>) and add <code>REVIEWS_URL</code> + a client in <code>client.ts</code>. The db scripts read <code>SERVICES</code>, so <code>db:reset</code> will create <code>tf_reviews</code> automatically.</li>
+<li>Write <code>services/reviews/migrations/001_init.sql</code> and the routes in <code>src/index.ts</code> (<code>createService(&#39;reviews&#39;)</code>).</li>
+<li>Add <code>{ &quot;path&quot;: &quot;services/reviews&quot; }</code> to the root <code>tsconfig.json</code> references.</li>
+<li>Add it to the root <code>dev:services</code> script (<code>&quot;npm:dev -w @tf/reviews&quot;</code>).</li>
+<li>Expose public routes through <code>services/gateway</code>.</li>
+<li><code>npm install</code> (creates the <code>@tf/reviews</code> symlink), then <code>npm run db:reset</code> or <code>db:migrate</code>, <code>npm run typecheck</code>, <code>npm run dev</code>.</li>
+<li>Update <code>research/architecture.md</code> (ports, contract).</li>
+</ol>
+<h3>Add a new shared front-end or backend library</h3>
+<p>Create <code>packages/&lt;name&gt;/package.json</code> (name <code>@tf/&lt;name&gt;</code>, <code>&quot;private&quot;: true</code>, an <code>exports</code> field), run <code>npm install</code>, then add <code>&quot;@tf/&lt;name&gt;&quot;: &quot;*&quot;</code> to the packages that use it (or <code>npm install @tf/&lt;name&gt; -w &lt;consumer&gt;</code>).</p>
+<h2>9. Troubleshooting</h2>
+<table>
+<thead>
+<tr>
+<th>Symptom</th>
+<th>Cause → fix</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>Cannot find package &#39;@tf/shared&#39;</code></td>
+<td>Workspace symlinks missing → run <code>npm install</code> at the root</td>
+</tr>
+<tr>
+<td>A service runs old shared code / <code>dist</code> not found</td>
+<td>Started with <code>node dist/…</code> without building → use <code>npm run dev</code>, or run <code>npm run typecheck</code> first</td>
+</tr>
+<tr>
+<td><code>ERR_UNKNOWN_FILE_EXTENSION &quot;.ts&quot;</code> from <code>@tf/shared</code></td>
+<td>Run with plain <code>node</code> but no <code>development</code> condition → use the <code>dev</code> script (tsx with <code>--conditions=development</code>)</td>
+</tr>
+<tr>
+<td><code>EADDRINUSE: :4004</code></td>
+<td>Something already listens there → <code>lsof -nP -iTCP:4004 -sTCP:LISTEN</code>, stop it, or you already have <code>npm run dev</code> running</td>
+</tr>
+<tr>
+<td>Type errors appear only in <code>tsc -b</code></td>
+<td>Editors check files one at a time; <code>tsc -b</code> checks everything → trust <code>npm run typecheck</code></td>
+</tr>
+<tr>
+<td>Next.js can&#39;t compile <code>@tf/chat-ui</code></td>
+<td>It must be in <code>transpilePackages</code> (it is)</td>
+</tr>
+<tr>
+<td><code>npm warn allow-scripts …</code> during install</td>
+<td>npm 11 doesn&#39;t run third-party install scripts until approved. Our stack doesn&#39;t need them; <code>npm approve-scripts</code> lists them if a package ever does</td>
+</tr>
+<tr>
+<td>A second <code>package-lock.json</code> appeared inside a package</td>
+<td>Someone ran <code>npm install</code> inside that folder → delete it, run <code>npm install</code> from the root</td>
+</tr>
+<tr>
+<td>Weird dependency state</td>
+<td><code>rm -rf node_modules */*/node_modules &amp;&amp; npm install</code> (the lockfile keeps versions the same)</td>
+</tr>
+<tr>
+<td>Services can&#39;t reach Postgres</td>
+<td><code>npm run db:up</code>; check <code>docker ps</code> shows <code>trailforge-postgres</code> healthy</td>
+</tr>
+</tbody></table>
+<h2>10. Cheat sheet</h2>
+<pre><code class="language-bash"># setup
+npm install &amp;&amp; npm run db:up &amp;&amp; npm run db:reset
+
+# run
+npm run dev                       # everything
+npm run dev -w @tf/order          # one package
+npm run dev:web                   # storefront only (needs services running)
+
+# deps
+npm install &lt;pkg&gt; -w @tf/&lt;name&gt;   # add to one package
+npm install -D &lt;pkg&gt;              # add a root tool
+npm ls &lt;pkg&gt;                      # who uses it
+
+# quality
+npm run typecheck                 # backend (tsc -b)
+npm run typecheck -w @tf/web      # a front-end
+node scripts/smoke/api-smoke.mjs  # API end to end (changes data)
+
+# data
+npm run db:migrate                # safe: new migrations only
+npm run db:reset                  # destructive: recreate + seed
+</code></pre>
+<h2>11. Why a monorepo for this project?</h2>
+<table>
+<thead>
+<tr>
+<th>Benefit</th>
+<th>In TrailForge</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Change a contract and its callers in <strong>one commit</strong></td>
+<td>Changing order statuses touched shared types, the order service, the seed, the web app and RAG docs together</td>
+</tr>
+<tr>
+<td>Share code without publishing packages</td>
+<td><code>@tf/shared</code> (auth, db, pricing) and <code>@tf/chat-ui</code></td>
+</tr>
+<tr>
+<td>One install, one lockfile, one set of versions</td>
+<td>Every service uses the same <code>express</code>, <code>pg</code>, <code>zod</code></td>
+</tr>
+<tr>
+<td>One command to run the whole system</td>
+<td><code>npm run dev</code></td>
+</tr>
+</tbody></table>
+<p>The trade-off: services are still <strong>deployed separately</strong> (each becomes its own container on Azure, the web app goes to Vercel). The monorepo is about how we <em>develop</em>, not how we <em>deploy</em>. Deployment details are in <a href="deployment-plan.html">Deployment Plan</a>.</p>
+</main></div></body></html>

@@ -1,0 +1,488 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TrailForge: Architecture & Contracts</title>
+<style>
+:root{--bg:#fbfaf7;--fg:#1f2a24;--muted:#5b6b62;--line:#dfe3dc;--accent:#2f6b4f;--code:#f0f2ec;--soft:#eef3ee}
+@media (prefers-color-scheme:dark){:root{--bg:#121714;--fg:#e4ebe6;--muted:#9aa9a0;--line:#2b352f;--accent:#6fbf93;--code:#1b221e;--soft:#18211c}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.65 system-ui,-apple-system,"Segoe UI",sans-serif}
+.wrap{display:grid;grid-template-columns:240px minmax(0,1fr);min-height:100vh}
+nav{border-right:1px solid var(--line);padding:24px 16px;position:sticky;top:0;height:100vh;overflow:auto;background:var(--soft)}
+nav b{display:block;margin-bottom:12px;color:var(--accent)}nav a{display:block;padding:6px 8px;border-radius:6px;color:var(--fg);text-decoration:none;font-size:14px}
+nav a.on,nav a:hover{background:var(--bg);color:var(--accent)}
+main{max-width:900px;padding:40px 40px 100px}h1{font-size:30px;line-height:1.25}h2{margin-top:40px;padding-bottom:6px;border-bottom:1px solid var(--line)}
+a{color:var(--accent)}code{background:var(--code);padding:2px 5px;border-radius:4px;font-size:.88em}
+pre{background:var(--code);border:1px solid var(--line);border-radius:8px;padding:14px;overflow-x:auto;font-size:13px;line-height:1.5}pre code{padding:0;background:none}
+table{border-collapse:collapse;width:100%;font-size:14.5px;display:block;overflow-x:auto}th,td{border:1px solid var(--line);padding:7px 10px;text-align:left;vertical-align:top}th{background:var(--soft)}
+blockquote{margin:16px 0;padding:8px 16px;border-left:4px solid var(--accent);background:var(--soft);border-radius:0 8px 8px 0}
+@media (max-width:760px){.wrap{grid-template-columns:1fr}nav{position:static;height:auto;border-right:0;border-bottom:1px solid var(--line)}main{padding:24px 16px 80px}}
+</style></head><body><div class="wrap"><nav><a href="../" class="hub-link">← All readings</a><b>TrailForge research</b><a href="application-context.html" class="">TrailForge: Application Context</a><a href="architecture.html" class="on">TrailForge: Architecture & Contracts</a><a href="deployment-plan.html" class="">TrailForge: Deployment Plan</a><a href="implementation-plan.html" class="">TrailForge: Implementation Plan</a><a href="monorepo-guide.html" class="">Monorepo Guide: How the TrailForge Workspace Works</a></nav><main><h1>TrailForge: Architecture &amp; Contracts</h1>
+<p>This is the source of truth for ports, data shapes and the public API. Frontend, services and the assistant all build against it.</p>
+<h2>Ports</h2>
+<table>
+<thead>
+<tr>
+<th>Component</th>
+<th>Port</th>
+<th>Package</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>PostgreSQL</td>
+<td>5432</td>
+<td>docker <code>trailforge-postgres</code> (user/pass <code>trailforge</code>)</td>
+</tr>
+<tr>
+<td>pgAdmin</td>
+<td>5050</td>
+<td><a href="http://localhost:5050">http://localhost:5050</a></td>
+</tr>
+<tr>
+<td>gateway (BFF)</td>
+<td>3000</td>
+<td><code>@tf/gateway</code></td>
+</tr>
+<tr>
+<td>customer</td>
+<td>4001</td>
+<td><code>@tf/customer</code> → db <code>tf_customer</code></td>
+</tr>
+<tr>
+<td>catalog</td>
+<td>4002</td>
+<td><code>@tf/catalog</code> → db <code>tf_catalog</code></td>
+</tr>
+<tr>
+<td>inventory</td>
+<td>4003</td>
+<td><code>@tf/inventory</code> → db <code>tf_inventory</code></td>
+</tr>
+<tr>
+<td>order</td>
+<td>4004</td>
+<td><code>@tf/order</code> → db <code>tf_order</code></td>
+</tr>
+<tr>
+<td>payment</td>
+<td>4005</td>
+<td><code>@tf/payment</code> → db <code>tf_payment</code></td>
+</tr>
+<tr>
+<td>promotion</td>
+<td>4006</td>
+<td><code>@tf/promotion</code> → db <code>tf_promotion</code></td>
+</tr>
+<tr>
+<td>marketing</td>
+<td>4007</td>
+<td><code>@tf/marketing</code> → db <code>tf_marketing</code></td>
+</tr>
+<tr>
+<td>assistant</td>
+<td>4100</td>
+<td><code>@tf/assistant</code> → db <code>tf_assistant</code></td>
+</tr>
+<tr>
+<td>web (storefront + admin)</td>
+<td>5173</td>
+<td><code>@tf/web</code>: <strong>Next.js 16</strong>. <code>app/api/[...path]</code> route handler proxies to the gateway and adds the cookie token.</td>
+</tr>
+<tr>
+<td>chat (full-screen)</td>
+<td>5174</td>
+<td><code>@tf/chat</code>: <strong>React + Vite</strong>. The Vite dev proxy forwards <code>/api</code> → 3000.</td>
+</tr>
+</tbody></table>
+<h2>Conventions</h2>
+<ul>
+<li><strong>Money is integer cents</strong> everywhere (<code>priceCents</code>, <code>totalCents</code>). Currency is USD.</li>
+<li><strong>IDs:</strong> <code>bigint</code> identity columns, serialized as numbers. Orders also have a human <code>number</code> (e.g. <code>TF-100042</code>).</li>
+<li><strong>JSON is camelCase</strong> over HTTP; <strong>snake_case</strong> in SQL.</li>
+<li><strong>Errors:</strong> <code>{ &quot;error&quot;: { &quot;code&quot;: &quot;NOT_FOUND&quot;, &quot;message&quot;: &quot;...&quot; } }</code> with a matching HTTP status.</li>
+<li><strong>Auth:</strong><ul>
+<li>The customer service issues an HS256 JWT (<code>sub</code> = customer id, <code>role</code> = <code>customer|admin</code>, <code>email</code>, <code>name</code>).</li>
+<li>Browsers send <code>Authorization: Bearer &lt;token&gt;</code>; the gateway forwards it, and every service verifies it with the shared <code>JWT_SECRET</code>.</li>
+<li>Service-to-service calls send <code>x-internal-token: $INTERNAL_TOKEN</code> (trusted, may act on any customer).</li>
+</ul>
+</li>
+<li>Token storage:<ul>
+<li><strong>web (Next.js):</strong> httpOnly cookie <code>tf_token</code>, set by <code>POST /api/session</code>; browser JavaScript never sees the JWT.</li>
+<li><strong>chat (Vite):</strong> <code>localStorage[&quot;tf_token&quot;]</code>, the simpler SPA approach. Compare the two trade-offs.</li>
+</ul>
+</li>
+</ul>
+<h2>Public API (gateway, <code>/api/*</code>)</h2>
+<h3>Auth &amp; profile</h3>
+<table>
+<thead>
+<tr>
+<th>Method</th>
+<th>Path</th>
+<th>Body / query</th>
+<th>Response</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>POST</td>
+<td><code>/api/auth/register</code></td>
+<td><code>{ email, password, firstName, lastName }</code></td>
+<td><code>{ token, customer }</code></td>
+</tr>
+<tr>
+<td>POST</td>
+<td><code>/api/auth/login</code></td>
+<td><code>{ email, password }</code></td>
+<td><code>{ token, customer }</code></td>
+</tr>
+<tr>
+<td>GET</td>
+<td><code>/api/me</code> 🔒</td>
+<td></td>
+<td><code>Customer</code></td>
+</tr>
+<tr>
+<td>PATCH</td>
+<td><code>/api/me</code> 🔒</td>
+<td><code>{ firstName?, lastName?, phone?, marketingOptIn? }</code></td>
+<td><code>Customer</code></td>
+</tr>
+<tr>
+<td>GET</td>
+<td><code>/api/me/addresses</code> 🔒</td>
+<td></td>
+<td><code>Address[]</code></td>
+</tr>
+<tr>
+<td>POST</td>
+<td><code>/api/me/addresses</code> 🔒</td>
+<td><code>Address</code> without id</td>
+<td><code>Address</code></td>
+</tr>
+</tbody></table>
+<pre><code class="language-ts">type Customer = { id: number; email: string; firstName: string; lastName: string; phone: string | null;
+  role: &#39;customer&#39; | &#39;admin&#39;; tier: &#39;bronze&#39; | &#39;silver&#39; | &#39;gold&#39;; points: number; birthday: string | null;
+  marketingOptIn: boolean; createdAt: string };
+type Address = { id: number; label: string; line1: string; line2: string | null; city: string; state: string;
+  postalCode: string; country: string; isDefault: boolean };
+</code></pre>
+<h3>Catalog</h3>
+<table>
+<thead>
+<tr>
+<th>Method</th>
+<th>Path</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>GET</td>
+<td><code>/api/categories</code></td>
+<td><code>Category[]</code> = <code>{ slug, name, description, productCount }</code></td>
+</tr>
+<tr>
+<td>GET</td>
+<td><code>/api/products</code></td>
+<td>query <code>q, category, brand, minPrice, maxPrice (cents), sort (relevance|price_asc|price_desc|rating|newest), page (1-based), pageSize (≤48)</code> → <code>{ items: ProductSummary[], total, page, pageSize }</code></td>
+</tr>
+<tr>
+<td>GET</td>
+<td><code>/api/products/:slug</code></td>
+<td><code>Product</code></td>
+</tr>
+<tr>
+<td>GET</td>
+<td><code>/api/products/:slug/reviews</code></td>
+<td><code>Review[]</code></td>
+</tr>
+</tbody></table>
+<pre><code class="language-ts">type ProductSummary = { id: number; slug: string; name: string; brand: string; category: string;
+  priceCents: number; rating: number; reviewCount: number; inStock: boolean; tags: string[] };
+type Product = ProductSummary &amp; { description: string; highlights: string[]; specs: Record&lt;string, string&gt;;
+  useCases: string[]; warrantyYears: number; variants: Variant[] };
+type Variant = { id: number; sku: string; size: string | null; color: string | null; priceCents: number; stock: number };
+type Review = { id: number; rating: number; title: string; body: string; authorName: string; createdAt: string };
+</code></pre>
+<h3>Cart &amp; checkout</h3>
+<p>The cart lives in the browser (<code>localStorage[&quot;tf_cart&quot;]</code> = <code>{ variantId, qty }[]</code>); the server prices it.</p>
+<table>
+<thead>
+<tr>
+<th>Method</th>
+<th>Path</th>
+<th>Body</th>
+<th>Response</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>POST</td>
+<td><code>/api/cart/quote</code></td>
+<td><code>{ items: {variantId, qty}[], promoCode? }</code></td>
+<td><code>Quote</code></td>
+</tr>
+<tr>
+<td>POST</td>
+<td><code>/api/orders</code> 🔒</td>
+<td><code>{ items, promoCode?, addressId, payment: { cardNumber, expiry, cvc } }</code></td>
+<td><code>Order</code></td>
+</tr>
+</tbody></table>
+<pre><code class="language-ts">type QuoteLine = { variantId: number; productSlug: string; name: string; size: string | null; color: string | null;
+  qty: number; unitPriceCents: number; lineTotalCents: number; available: number };
+type Quote = { lines: QuoteLine[]; subtotalCents: number; discountCents: number; shippingCents: number;
+  taxCents: number; totalCents: number; promotion: { code: string; title: string } | null; messages: string[] };
+</code></pre>
+<p>Shipping: free over $75 subtotal, otherwise $7.95. Tax: 8% of (subtotal − discount). Test card <code>4242 4242 4242 4242</code> succeeds; <code>4000 0000 0000 0002</code> is declined.</p>
+<h3>Orders</h3>
+<table>
+<thead>
+<tr>
+<th>Method</th>
+<th>Path</th>
+<th>Response</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>GET</td>
+<td><code>/api/me/orders</code> 🔒</td>
+<td><code>OrderSummary[]</code> = <code>{ number, status, placedAt, totalCents, itemCount }</code></td>
+</tr>
+<tr>
+<td>GET</td>
+<td><code>/api/me/orders/:number</code> 🔒</td>
+<td><code>Order</code></td>
+</tr>
+<tr>
+<td>POST</td>
+<td><code>/api/me/orders/:number/cancel</code> 🔒</td>
+<td><code>Order</code> (only while <code>pending</code>/<code>preparing</code>)</td>
+</tr>
+<tr>
+<td>POST</td>
+<td><code>/api/me/orders/:number/returns</code> 🔒</td>
+<td>body <code>{ items: {orderItemId, qty}[], reason }</code> → <code>Return</code></td>
+</tr>
+</tbody></table>
+<pre><code class="language-ts">// pending = checkout saga running. After placement: preparing → on_the_way → delivered.
+type OrderStatus = &#39;pending&#39; | &#39;preparing&#39; | &#39;on_the_way&#39; | &#39;delivered&#39; | &#39;cancelled&#39; | &#39;returned&#39; | &#39;partially_returned&#39;;
+type Order = { id: number; number: string; customerId: number; status: OrderStatus; placedAt: string;
+  subtotalCents: number; discountCents: number; shippingCents: number; taxCents: number; totalCents: number;
+  promoCode: string | null; shippingAddress: Address;
+  items: { id: number; variantId: number; sku: string; productSlug: string; name: string; size: string | null;
+           color: string | null; qty: number; unitPriceCents: number }[];
+  shipments: { carrier: string; trackingNumber: string; status: string; shippedAt: string; deliveredAt: string | null }[];
+  returns: Return[] };
+type Return = { id: number; status: &#39;requested&#39; | &#39;approved&#39; | &#39;rejected&#39; | &#39;refunded&#39;; reason: string;
+  refundCents: number; createdAt: string; items: { orderItemId: number; qty: number }[] };
+</code></pre>
+<h3>Promotions &amp; marketing</h3>
+<table>
+<thead>
+<tr>
+<th>Method</th>
+<th>Path</th>
+<th>Response</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>GET</td>
+<td><code>/api/promotions</code></td>
+<td>active public <code>Promotion[]</code></td>
+</tr>
+<tr>
+<td>GET</td>
+<td><code>/api/me/offers</code> 🔒</td>
+<td><code>Promotion[]</code> personal offers the customer is eligible for (public + targeted)</td>
+</tr>
+<tr>
+<td>GET</td>
+<td><code>/api/me/messages</code> 🔒</td>
+<td><code>Message[]</code> = <code>{ id, subject, body, createdAt, readAt }</code></td>
+</tr>
+</tbody></table>
+<pre><code class="language-ts">type Promotion = { id: number; code: string; title: string; description: string; audience: &#39;public&#39; | &#39;targeted&#39;;
+  type: &#39;percent&#39; | &#39;fixed&#39; | &#39;free_shipping&#39;; value: number; minSubtotalCents: number | null;
+  categories: string[] | null; startsAt: string; endsAt: string | null };
+</code></pre>
+<h3>Extra customer routes</h3>
+<p><code>GET /api/me/loyalty</code> (tier, points, recent events) · <code>GET /api/me/summary</code> (aggregated: profile + 3 recent orders + offers, an example of BFF aggregation) · <code>POST /api/me/messages/:id/read</code></p>
+<h3>Dev-only: quick account switching</h3>
+<p>On when <code>NODE_ENV !== &#39;production&#39;</code>; set <code>DEV_QUICK_LOGIN=false</code> to turn it off. The flag is checked in the customer service, which returns 404 when it&#39;s off.</p>
+<table>
+<thead>
+<tr>
+<th>Method</th>
+<th>Path</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>GET</td>
+<td><code>/api/dev/accounts</code></td>
+<td>every account + <code>orderCount</code>, <code>lastOrderAt</code>, <code>segments</code> (gateway aggregates customer + order + marketing)</td>
+</tr>
+<tr>
+<td>POST</td>
+<td><code>/api/dev/login-as</code></td>
+<td><code>{ customerId }</code> → <code>{ token, customer }</code>: impersonation, no password</td>
+</tr>
+</tbody></table>
+<p>The web app uses it through <code>POST /api/session { mode: &#39;dev&#39;, customerId }</code>, so the token still lands only in the httpOnly cookie. UI: the <strong>Switch test account</strong> modal on <code>/login</code> (<code>apps/web/components/QuickLogin.tsx</code>).</p>
+<h3>Admin 🔒(role=admin)</h3>
+<table>
+<thead>
+<tr>
+<th>Route</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>GET /api/admin/orders?status=&amp;customerId=</code></td>
+<td>all customers&#39; orders + <code>customerName/Email/Tier</code> (gateway joins order + customer)</td>
+</tr>
+<tr>
+<td><code>GET /api/admin/orders/summary</code></td>
+<td><code>{ orders, customers, revenueCents, last7Days, byStatus: { preparing: {count,totalCents}, … } }</code></td>
+</tr>
+<tr>
+<td><code>GET /api/admin/orders/:number</code> · <code>POST /api/admin/orders/:number/advance</code></td>
+<td>any order; advance = preparing → on_the_way (creates shipment + tracking) → delivered (stamps delivery). Each step writes <code>order_status_history</code> and an inbox message</td>
+</tr>
+<tr>
+<td><code>GET /api/admin/inventory</code></td>
+<td>every variant: <code>onHand, reserved, available, reorderPoint, sold30d, lastMovement</code> + product name (gateway joins inventory + catalog)</td>
+</tr>
+<tr>
+<td><code>POST /api/admin/inventory/restock</code></td>
+<td><code>{ variantId, qty }</code> → logs a <code>restock:admin:&lt;id&gt;</code> movement</td>
+</tr>
+<tr>
+<td><code>GET /api/admin/returns?status=requested</code> · <code>POST /api/admin/returns/:id/decide</code> <code>{decision}</code></td>
+<td>refund review</td>
+</tr>
+<tr>
+<td><code>GET /api/admin/customers</code></td>
+<td>with tier/points</td>
+</tr>
+<tr>
+<td><code>GET /api/admin/inventory/low-stock</code></td>
+<td><code>{ variantId, sku, onHand, reserved, available, reorderPoint }</code></td>
+</tr>
+<tr>
+<td><code>GET /api/admin/segments</code> · <code>/campaigns</code> · <code>/promotions</code></td>
+<td>marketing + promotion views</td>
+</tr>
+<tr>
+<td><code>GET /api/admin/approvals</code></td>
+<td><code>{ id, kind, summary, orderNumber?, amountCents?, createdAt }[]</code>; ids look like <code>return-18</code> or <code>run-3</code></td>
+</tr>
+<tr>
+<td><code>POST /api/admin/approvals/:id</code></td>
+<td><code>{ decision: &#39;approve&#39; | &#39;reject&#39; }</code></td>
+</tr>
+</tbody></table>
+<h2>Order lifecycle &amp; inventory</h2>
+<pre><code>checkout:  pending ──(reserve stock → charge card → commit stock)──► preparing
+           pending ──(any step fails: release stock)──► cancelled
+admin:     preparing ──► on_the_way ──► delivered        (POST /api/admin/orders/:n/advance)
+customer:  preparing ──cancel──► cancelled  (refund + restock)
+returns:   delivered ──► partially_returned / returned   (refund + restock)
+</code></pre>
+<p>Inventory <code>on_hand</code> drops when the reservation is committed at checkout and goes back up on cancel or return. Every change is a row in <code>movements</code> (<code>sale:&lt;order&gt;</code>, <code>cancel:&lt;order&gt;</code>, <code>return:&lt;order&gt;</code>, <code>restock:…</code>). Order <code>Order.statusHistory</code> = <code>{ status, note, changedBy, createdAt }[]</code>.</p>
+<h2>Return &amp; refund policy (enforced in <code>services/order</code>, constants <code>RETURN_POLICY</code> in <code>packages/shared/src/types.ts</code>)</h2>
+<ul>
+<li>Window: 60 days from delivery; <code>navigation-electronics</code> 30 days.</li>
+<li>Non-returnable online: products tagged <code>safety-gear</code> (harnesses, ropes, carabiners, belay devices, helmets, via ferrata) or <code>final-sale</code> (gift cards). Tags come from the catalog at check time.</li>
+<li>Refund = what was paid: <code>itemPrice × qty × (subtotal − discount + tax) ÷ subtotal</code>. Shipping is refunded only on cancellation.</li>
+<li>≤ $100 → approved automatically (<code>decided_by = &#39;auto&#39;</code>). Larger → <code>requested</code>, shown in admin approvals.</li>
+<li><code>POST /me/orders/:n/returns/check</code> = dry run → <code>{ eligible, problems[], refundCents, autoApprove }</code>. The assistant will use this.</li>
+<li>Approval runs: payment refund (idempotency key <code>return:&lt;id&gt;</code>) → inventory restock → order status (+history) → loyalty reversal → inbox message.</li>
+<li>Cancellation (only <code>preparing</code>): full refund (<code>cancel:&lt;n&gt;</code>) → restock → promo redemption deleted (one-use codes come back) → loyalty reversal → inbox.</li>
+<li>Customer-facing source of truth for RAG: <code>rag/knowledge/refund-policy.md</code>, <code>returns-and-refunds.md</code>, <code>order-cancellation-and-changes.md</code>, <code>delivery-and-order-status.md</code>, <code>damaged-defective-lost-or-wrong-items.md</code>, <code>store-policies-overview.md</code>.</li>
+</ul>
+<h2>Test data (<code>npm run db:reset</code>)</h2>
+<table>
+<thead>
+<tr>
+<th>Account</th>
+<th>Password</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>demo@trailforge.example</code> (Alex Rivera)</td>
+<td><code>Password123!</code></td>
+<td>Gold. Has edge-case orders: delivered 14d ago (expensive, so the refund needs approval), delivered 24d ago (cheap, auto-refund), delivered 79d ago (outside the window), shipped (in transit), processing (cancellable), plus older orders. Birthday this month, so BDAY20 applies.</td>
+</tr>
+<tr>
+<td><code>admin@trailforge.example</code></td>
+<td><code>Admin123!</code></td>
+<td>Admin console</td>
+</tr>
+<tr>
+<td>29 more customers <code>&lt;first&gt;.&lt;last&gt;&lt;n&gt;@example.com</code></td>
+<td><code>Password123!</code></td>
+<td>Personas: heavy, regular, occasional, lapsed, none (no orders, so WELCOME10 applies)</td>
+</tr>
+</tbody></table>
+<h3>Chat (assistant via gateway)</h3>
+<p><code>POST /api/chat</code> with body <code>{ conversationId?: string, message: string }</code> and an optional <code>Authorization</code> header. The response is <code>text/event-stream</code> with these events:</p>
+<table>
+<thead>
+<tr>
+<th>event</th>
+<th>data</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>meta</code></td>
+<td><code>{ conversationId, authenticated: boolean, customerName?: string }</code></td>
+</tr>
+<tr>
+<td><code>delta</code></td>
+<td><code>{ text }</code> (append to the assistant message)</td>
+</tr>
+<tr>
+<td><code>agent</code></td>
+<td><code>{ name }</code> (active agent changed, e.g. after a handoff)</td>
+</tr>
+<tr>
+<td><code>tool_call</code></td>
+<td><code>{ id, name, arguments }</code></td>
+</tr>
+<tr>
+<td><code>tool_result</code></td>
+<td><code>{ id, output }</code></td>
+</tr>
+<tr>
+<td><code>auth_required</code></td>
+<td><code>{ reason }</code> (UI shows a &quot;Log in&quot; button inside the chat)</td>
+</tr>
+<tr>
+<td><code>approval_required</code></td>
+<td><code>{ id, summary }</code> (human approval pending)</td>
+</tr>
+<tr>
+<td><code>done</code></td>
+<td><code>{ usage?: { inputTokens, outputTokens, requests } }</code></td>
+</tr>
+<tr>
+<td><code>error</code></td>
+<td><code>{ message }</code></td>
+</tr>
+</tbody></table>
+<p><code>GET /api/chat/:conversationId/messages</code> returns the conversation history <code>{ role: &#39;user&#39; | &#39;assistant&#39;, text }[]</code>, which lets the UI restore a conversation after login.</p>
+<h2>Seed source data formats</h2>
+<p><code>data/products.json</code>:</p>
+<pre><code class="language-jsonc">{
+  &quot;categories&quot;: [{ &quot;slug&quot;: &quot;tents&quot;, &quot;name&quot;: &quot;Tents &amp; Shelters&quot;, &quot;description&quot;: &quot;...&quot; }],
+  &quot;products&quot;: [{
+    &quot;sku&quot;: &quot;TF-TEN-001&quot;, &quot;slug&quot;: &quot;ridgeline-2p-ultralight-tent&quot;, &quot;name&quot;: &quot;Ridgeline 2P Ultralight Tent&quot;,
+    &quot;brand&quot;: &quot;TrailForge&quot;, &quot;category&quot;: &quot;tents&quot;, &quot;priceCents&quot;: 34900,
+    &quot;description&quot;: &quot;2–3 paragraphs&quot;, &quot;highlights&quot;: [&quot;...&quot;],
+    &quot;specs&quot;: { &quot;Weight&quot;: &quot;1.6 kg&quot;, &quot;Capacity&quot;: &quot;2 person&quot;, &quot;Waterproof rating&quot;: &quot;3000 mm&quot; },
+    &quot;useCases&quot;: [&quot;backpacking&quot;, &quot;3-season&quot;], &quot;tags&quot;: [&quot;ultralight&quot;], &quot;warrantyYears&quot;: 2,
+    &quot;variants&quot;: [{ &quot;sku&quot;: &quot;TF-TEN-001-GRN&quot;, &quot;size&quot;: null, &quot;color&quot;: &quot;Forest Green&quot;, &quot;priceDeltaCents&quot;: 0 }]
+  }]
+}
+</code></pre>
+<p><code>data/promotions.json</code>: see the file. The rule fields are interpreted by the promotion service.</p>
+</main></div></body></html>

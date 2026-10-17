@@ -1,0 +1,623 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TrailForge: Deployment Plan</title>
+<style>
+:root{--bg:#fbfaf7;--fg:#1f2a24;--muted:#5b6b62;--line:#dfe3dc;--accent:#2f6b4f;--code:#f0f2ec;--soft:#eef3ee}
+@media (prefers-color-scheme:dark){:root{--bg:#121714;--fg:#e4ebe6;--muted:#9aa9a0;--line:#2b352f;--accent:#6fbf93;--code:#1b221e;--soft:#18211c}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.65 system-ui,-apple-system,"Segoe UI",sans-serif}
+.wrap{display:grid;grid-template-columns:240px minmax(0,1fr);min-height:100vh}
+nav{border-right:1px solid var(--line);padding:24px 16px;position:sticky;top:0;height:100vh;overflow:auto;background:var(--soft)}
+nav b{display:block;margin-bottom:12px;color:var(--accent)}nav a{display:block;padding:6px 8px;border-radius:6px;color:var(--fg);text-decoration:none;font-size:14px}
+nav a.on,nav a:hover{background:var(--bg);color:var(--accent)}
+main{max-width:900px;padding:40px 40px 100px}h1{font-size:30px;line-height:1.25}h2{margin-top:40px;padding-bottom:6px;border-bottom:1px solid var(--line)}
+a{color:var(--accent)}code{background:var(--code);padding:2px 5px;border-radius:4px;font-size:.88em}
+pre{background:var(--code);border:1px solid var(--line);border-radius:8px;padding:14px;overflow-x:auto;font-size:13px;line-height:1.5}pre code{padding:0;background:none}
+table{border-collapse:collapse;width:100%;font-size:14.5px;display:block;overflow-x:auto}th,td{border:1px solid var(--line);padding:7px 10px;text-align:left;vertical-align:top}th{background:var(--soft)}
+blockquote{margin:16px 0;padding:8px 16px;border-left:4px solid var(--accent);background:var(--soft);border-radius:0 8px 8px 0}
+@media (max-width:760px){.wrap{grid-template-columns:1fr}nav{position:static;height:auto;border-right:0;border-bottom:1px solid var(--line)}main{padding:24px 16px 80px}}
+</style></head><body><div class="wrap"><nav><a href="../" class="hub-link">← All readings</a><b>TrailForge research</b><a href="application-context.html" class="">TrailForge: Application Context</a><a href="architecture.html" class="">TrailForge: Architecture & Contracts</a><a href="deployment-plan.html" class="on">TrailForge: Deployment Plan</a><a href="implementation-plan.html" class="">TrailForge: Implementation Plan</a><a href="monorepo-guide.html" class="">Monorepo Guide: How the TrailForge Workspace Works</a></nav><main><h1>TrailForge: Deployment Plan</h1>
+<blockquote>
+<p><strong>Target:</strong> the <strong>Next.js storefront on Vercel</strong> (a third-party host) and <strong>everything else on Azure</strong>: microservices, gateway, assistant, MCP servers, PostgreSQL, Azure OpenAI, Azure AI Search and the standalone chat app.
+This is Phase 11 of the <a href="implementation-plan.html">Implementation Plan</a>. Status: ⬜ not started · Last updated: 2026-10-17</p>
+</blockquote>
+<h2>1. Target architecture</h2>
+<pre><code>                    Browser
+          ┌────────────┴─────────────┐
+          ▼                          ▼
+  ┌──────────────────┐      ┌───────────────────────────┐
+  │ VERCEL            │      │ AZURE STATIC WEB APPS      │
+  │ apps/web (Next.js)│      │ apps/chat (React + Vite)   │
+  │ www.trailforge…   │      │ chat.trailforge…           │
+  │ Server Components │      │ static SPA, token in       │
+  │ + BFF route       │      │ localStorage               │
+  │ handler (cookie)  │      └─────────────┬─────────────┘
+  └────────┬─────────┘                    │ HTTPS + CORS
+           │ HTTPS (server → server)       │
+           ▼                               ▼
+  ┌──────────────────────── AZURE: resource group rg-trailforge-prod ─────────────────────────┐
+  │  Azure Container Apps environment (VNet, Log Analytics)                                  │
+  │   ┌──────────────┐  external ingress: api.trailforge…                                    │
+  │   │   gateway    │──────────────┐                                                        │
+  │   └──────────────┘              │ internal ingress only (http://&lt;app-name&gt;)              │
+  │     customer · catalog · inventory · order · payment · promotion · marketing             │
+  │     assistant ──► mcp-catalog · mcp-promotions (Phase 5)                                │
+  │     jobs: db-migrate · db-seed (demo) · rag-ingest                                       │
+  │                                                                                         │
+  │   Azure Database for PostgreSQL Flexible Server (8 databases: tf_customer … tf_assistant)│
+  │   Azure OpenAI (gpt-5-mini, text-embedding-3-small)   Azure AI Search (tf-products, tf-knowledge)│
+  │   Azure Container Registry · Key Vault · Managed Identity · Application Insights         │
+  └─────────────────────────────────────────────────────────────────────────────────────────┘
+</code></pre>
+<p><strong>What runs where</strong></p>
+<table>
+<thead>
+<tr>
+<th>Component</th>
+<th>Where</th>
+<th>Why</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>apps/web</code> (Next.js 16)</td>
+<td><strong>Vercel</strong></td>
+<td>First-class Next.js host: Server Components, streaming route handlers, previews per PR, instant rollback</td>
+</tr>
+<tr>
+<td><code>apps/chat</code> (Vite SPA)</td>
+<td>Azure Static Web Apps (Free)</td>
+<td>Static files on a global CDN; no server needed</td>
+</tr>
+<tr>
+<td>gateway</td>
+<td>Azure Container Apps, <strong>external</strong> ingress</td>
+<td>The only public API entry point</td>
+</tr>
+<tr>
+<td>7 domain services + assistant + MCP servers</td>
+<td>Azure Container Apps, <strong>internal</strong> ingress</td>
+<td>Not reachable from the internet; called by the gateway / assistant by app name</td>
+</tr>
+<tr>
+<td>PostgreSQL</td>
+<td>Azure Database for PostgreSQL Flexible Server</td>
+<td>Managed backups, patching, one server with 8 databases (database per service)</td>
+</tr>
+<tr>
+<td>Azure OpenAI, AI Search</td>
+<td>Azure</td>
+<td>Already the AI stack; reached with Managed Identity (no keys)</td>
+</tr>
+<tr>
+<td>Secrets</td>
+<td>Azure Key Vault (+ Vercel encrypted env vars)</td>
+<td><code>JWT_SECRET</code>, <code>INTERNAL_TOKEN</code>, DB password never in code</td>
+</tr>
+</tbody></table>
+<h2>2. Environments</h2>
+<table>
+<thead>
+<tr>
+<th>Environment</th>
+<th>Web</th>
+<th>Backend</th>
+<th>Data</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>local</strong></td>
+<td><code>next dev</code> :5173</td>
+<td><code>npm run dev</code> + Docker Postgres</td>
+<td><code>npm run db:reset</code> seed</td>
+</tr>
+<tr>
+<td><strong>production</strong></td>
+<td>Vercel production (<code>main</code> branch)</td>
+<td><code>rg-trailforge-prod</code></td>
+<td>Seeded once for the demo, then real usage</td>
+</tr>
+<tr>
+<td><strong>preview</strong></td>
+<td>Vercel preview per pull request</td>
+<td>Same Azure backend (read mostly)</td>
+<td>Previews protected by Vercel Deployment Protection</td>
+</tr>
+<tr>
+<td><em>(later)</em> staging</td>
+<td>Vercel preview env vars → staging gateway</td>
+<td><code>rg-trailforge-staging</code></td>
+<td>Its own seeded database</td>
+</tr>
+</tbody></table>
+<p>For a learning project, one Azure environment is enough. Add staging once previews start writing test orders you don&#39;t want in production.</p>
+<h2>3. Code changes needed before deploying</h2>
+<table>
+<thead>
+<tr>
+<th>#</th>
+<th>Change</th>
+<th>Where</th>
+<th>Why</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>1</td>
+<td><strong>Dockerfile</strong> (multi-stage, <code>SERVICE</code> build arg, Node 24 alpine, non-root user, <code>PORT=8080</code>) + <code>.dockerignore</code></td>
+<td>repo root</td>
+<td>Package every Express service as a container</td>
+</tr>
+<tr>
+<td>2</td>
+<td><strong>Postgres SSL</strong>: <code>ssl: { rejectUnauthorized: true }</code> when <code>PGSSLMODE=require</code></td>
+<td><code>packages/shared/src/db.ts</code></td>
+<td>Azure Flexible Server requires TLS</td>
+</tr>
+<tr>
+<td>3</td>
+<td><strong>Gateway CORS allow-list</strong> from <code>ALLOWED_ORIGINS</code> (today it only allows <code>localhost:517x</code>)</td>
+<td><code>services/gateway/src/index.ts</code></td>
+<td>Let the chat app on Static Web Apps call the API</td>
+</tr>
+<tr>
+<td>4</td>
+<td><strong>Chat app API base</strong>: <code>VITE_API_BASE</code> (default <code>/api</code>) passed to <code>useChat</code></td>
+<td><code>apps/chat/src</code></td>
+<td>In production there is no Vite proxy</td>
+</tr>
+<tr>
+<td>5</td>
+<td><strong>Runtime <code>GATEWAY_URL</code></strong>: remove it from the <code>env</code> block in <code>next.config.ts</code> (which bakes values in at build time); read <code>process.env</code> on the server</td>
+<td><code>apps/web/next.config.ts</code>, <code>lib/session.ts</code></td>
+<td>Change the backend URL without rebuilding</td>
+</tr>
+<tr>
+<td>6</td>
+<td><strong>Rate limiting</strong> on <code>/api/auth/*</code> and <code>/api/chat</code> (per IP + per user)</td>
+<td>gateway</td>
+<td>The gateway is public; protects login and model spend</td>
+</tr>
+<tr>
+<td>7</td>
+<td><strong>Health &amp; readiness</strong>: <code>/healthz</code> exists; add a DB ping to <code>/readyz</code></td>
+<td><code>createService</code></td>
+<td>Container Apps probes</td>
+</tr>
+<tr>
+<td>8</td>
+<td><strong>Production safety switches</strong>: <code>NODE_ENV=production</code> in images (turns off dev quick-login); refuse to start if <code>JWT_SECRET</code> is the dev default</td>
+<td>shared config</td>
+<td>Never ship impersonation or dev secrets</td>
+</tr>
+<tr>
+<td>9</td>
+<td>Service URLs from env (already done) → <code>http://customer</code>, <code>http://catalog</code>, …</td>
+<td>Container App env vars</td>
+<td>Internal DNS inside the environment</td>
+</tr>
+<tr>
+<td>10</td>
+<td><strong>Migrations runner image</strong> (<code>npm run db:migrate</code>) and an optional seed job</td>
+<td><code>scripts/db</code></td>
+<td>Schema changes run before new code goes live</td>
+</tr>
+</tbody></table>
+<h2>4. Azure resources</h2>
+<p>All created with <strong>Bicep</strong> in <code>infra/azure/</code> (<code>main.bicep</code> + modules) so the environment can be rebuilt with one command.</p>
+<table>
+<thead>
+<tr>
+<th>Resource</th>
+<th>SKU / setting (learning-friendly)</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Resource group</td>
+<td><code>rg-trailforge-prod</code>, region <strong>East US 2</strong></td>
+<td>Pick a region where <code>gpt-5-mini</code> + <code>text-embedding-3-small</code> are available (<code>az cognitiveservices model list -l &lt;region&gt;</code>)</td>
+</tr>
+<tr>
+<td>Log Analytics + Application Insights</td>
+<td>Pay-as-you-go, 30-day retention</td>
+<td>Container logs, traces (Phase 10)</td>
+</tr>
+<tr>
+<td>Container Registry</td>
+<td>Basic, admin user <strong>off</strong></td>
+<td>Images pulled with Managed Identity (AcrPull)</td>
+</tr>
+<tr>
+<td>User-assigned Managed Identity</td>
+<td><code>id-trailforge-apps</code></td>
+<td>Used by all Container Apps and jobs</td>
+</tr>
+<tr>
+<td>Key Vault</td>
+<td>Standard, RBAC mode</td>
+<td><code>jwt-secret</code>, <code>internal-token</code>, <code>pg-password</code>; apps read via Key Vault references</td>
+</tr>
+<tr>
+<td>PostgreSQL Flexible Server</td>
+<td><strong>Burstable B1ms</strong>, PG 17, 32 GB, 7-day backups, TLS required</td>
+<td>8 databases created by the migrate job; app user with least privilege per database (later)</td>
+</tr>
+<tr>
+<td>Container Apps environment</td>
+<td>Consumption plan, VNet-integrated</td>
+<td>Internal ingress for everything except the gateway</td>
+</tr>
+<tr>
+<td>Container Apps</td>
+<td>gateway, customer, catalog, inventory, order, payment, promotion, marketing, assistant (+ MCP servers)</td>
+<td>0.5 vCPU / 1 GiB each to start</td>
+</tr>
+<tr>
+<td>Container Apps jobs</td>
+<td><code>db-migrate</code> (manual/CI), <code>db-seed</code> (manual, demo only), <code>rag-ingest</code> (manual)</td>
+<td>Same image, different command</td>
+</tr>
+<tr>
+<td>Azure OpenAI</td>
+<td>S0 + deployments <code>gpt-5-mini</code>, <code>text-embedding-3-small</code> (GlobalStandard)</td>
+<td>Role <strong>Cognitive Services OpenAI User</strong> for the identity</td>
+</tr>
+<tr>
+<td>Azure AI Search</td>
+<td><strong>Basic</strong> (semantic ranker) or <strong>Free</strong> (no semantic ranker, 1 per subscription)</td>
+<td>Roles <strong>Search Index Data Reader</strong> (assistant), <strong>Contributor</strong> (ingest job)</td>
+</tr>
+<tr>
+<td>Static Web Apps</td>
+<td>Free</td>
+<td>Hosts <code>apps/chat</code></td>
+</tr>
+</tbody></table>
+<p><strong>Networking choice</strong></p>
+<table>
+<thead>
+<tr>
+<th>Option</th>
+<th>Setup</th>
+<th>Use when</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>A. Public Postgres + firewall (&quot;Allow Azure services&quot;)</td>
+<td>Simplest</td>
+<td>First deployment / learning</td>
+</tr>
+<tr>
+<td>B. <strong>VNet</strong>: Container Apps env in a VNet, Postgres with private access (delegated subnet)</td>
+<td>More Bicep, no public DB endpoint</td>
+<td>Recommended once it works; required for real data</td>
+</tr>
+</tbody></table>
+<p>Start with A, then move to B as a learning step. The app code doesn&#39;t change, only <code>PGHOST</code>.</p>
+<p><strong>Scaling</strong></p>
+<table>
+<thead>
+<tr>
+<th>App</th>
+<th>Min / max replicas</th>
+<th>Reason</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>gateway</td>
+<td>1 / 5</td>
+<td>No cold start on the public entry point</td>
+</tr>
+<tr>
+<td>assistant</td>
+<td>1 / 3</td>
+<td>Chat latency; sessions are in Postgres, so it scales horizontally</td>
+</tr>
+<tr>
+<td>domain services</td>
+<td>0–1 / 3</td>
+<td>Scale to zero saves money; set min 1 on order + catalog if cold starts hurt checkout</td>
+</tr>
+<tr>
+<td>MCP servers</td>
+<td>0 / 2</td>
+<td>Stateless (Streamable HTTP)</td>
+</tr>
+</tbody></table>
+<p><strong>Container App environment variables</strong> (per app)</p>
+<table>
+<thead>
+<tr>
+<th>Variable</th>
+<th>Value</th>
+<th>Source</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>NODE_ENV</code></td>
+<td><code>production</code></td>
+<td>plain</td>
+</tr>
+<tr>
+<td><code>PORT</code></td>
+<td><code>8080</code></td>
+<td>plain</td>
+</tr>
+<tr>
+<td><code>PGHOST</code>, <code>PGUSER</code>, <code>PGPORT</code>, <code>PGSSLMODE=require</code></td>
+<td>Flexible Server values</td>
+<td>plain</td>
+</tr>
+<tr>
+<td><code>PGPASSWORD</code></td>
+<td></td>
+<td>Key Vault <code>pg-password</code></td>
+</tr>
+<tr>
+<td><code>JWT_SECRET</code>, <code>INTERNAL_TOKEN</code></td>
+<td></td>
+<td>Key Vault</td>
+</tr>
+<tr>
+<td><code>CUSTOMER_URL</code> … <code>ASSISTANT_URL</code></td>
+<td><code>http://customer</code>, <code>http://catalog</code>, …</td>
+<td>plain (internal DNS)</td>
+</tr>
+<tr>
+<td><code>AZURE_OPENAI_ENDPOINT</code>, <code>AZURE_OPENAI_CHAT_DEPLOYMENT</code>, <code>AZURE_OPENAI_EMBEDDING_DEPLOYMENT</code></td>
+<td></td>
+<td>plain (assistant, ingest job)</td>
+</tr>
+<tr>
+<td><code>AZURE_SEARCH_ENDPOINT</code>, <code>AZURE_SEARCH_*_INDEX</code></td>
+<td></td>
+<td>plain (assistant, ingest job)</td>
+</tr>
+<tr>
+<td><code>AZURE_CLIENT_ID</code></td>
+<td>Managed Identity client id</td>
+<td>plain (so <code>DefaultAzureCredential</code> picks the right identity)</td>
+</tr>
+<tr>
+<td><code>ALLOWED_ORIGINS</code></td>
+<td><code>https://www.trailforge…,https://chat.trailforge…</code> + Vercel preview pattern</td>
+<td>gateway only</td>
+</tr>
+<tr>
+<td><code>DEV_QUICK_LOGIN</code></td>
+<td><code>false</code></td>
+<td>belt and braces</td>
+</tr>
+</tbody></table>
+<h2>5. Vercel (Next.js storefront)</h2>
+<table>
+<thead>
+<tr>
+<th>Setting</th>
+<th>Value</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Project</td>
+<td>Import GitHub <code>mk-tdev/trailforge</code></td>
+</tr>
+<tr>
+<td><strong>Root Directory</strong></td>
+<td><code>apps/web</code> (keep &quot;Include files outside the Root Directory&quot; on: <code>@tf/chat-ui</code> lives in <code>packages/</code>)</td>
+</tr>
+<tr>
+<td>Framework preset</td>
+<td>Next.js (auto-detected); install runs from the repo-root <code>package-lock.json</code> (npm workspaces)</td>
+</tr>
+<tr>
+<td>Node.js</td>
+<td>24.x (Vercel default)</td>
+</tr>
+<tr>
+<td>Build command</td>
+<td><code>next build</code> (default)</td>
+</tr>
+<tr>
+<td>Production branch</td>
+<td><code>main</code> → production; every PR → preview URL</td>
+</tr>
+<tr>
+<td>Function region</td>
+<td>Close to the Azure region (e.g. <code>iad1</code> for East US 2), set in <code>vercel.ts</code> / project settings, so the BFF ↔ gateway hop is a few ms</td>
+</tr>
+<tr>
+<td>Fluid compute</td>
+<td>On (default). Streaming chat responses work on the Node.js runtime; default max duration 300 s is plenty for SSE chat</td>
+</tr>
+</tbody></table>
+<p><strong>Environment variables</strong> (Vercel → Settings → Environment Variables, or <code>vercel env add</code>)</p>
+<table>
+<thead>
+<tr>
+<th>Variable</th>
+<th>Production</th>
+<th>Preview</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>GATEWAY_URL</code></td>
+<td><code>https://api.trailforge…</code></td>
+<td>same (or staging gateway)</td>
+<td>Server-only; never <code>NEXT_PUBLIC_</code></td>
+</tr>
+<tr>
+<td><code>NEXT_PUBLIC_CHAT_APP_URL</code></td>
+<td><code>https://chat.trailforge…</code></td>
+<td>same</td>
+<td>Link to the full-screen chat</td>
+</tr>
+</tbody></table>
+<p>The browser never talks to Azure directly from the storefront. It calls the Next.js BFF (<code>/api/[...path]</code>), which adds the httpOnly-cookie token and calls the gateway server-to-server. The session cookie lives on the Vercel domain (<code>secure</code>, <code>httpOnly</code>, <code>sameSite=lax</code>).</p>
+<p><strong>Vercel ↔ Azure security notes</strong></p>
+<ul>
+<li>Vercel functions don&#39;t have fixed outbound IPs on standard plans, so the gateway can&#39;t be locked to Vercel&#39;s IPs. Protection comes from JWT auth, the CORS allow-list, rate limiting and internal-only services. Add Azure Front Door + WAF later if needed.</li>
+<li>Preview deployments are protected by Vercel Deployment Protection (login required), so nobody else reaches the shared backend through them.</li>
+</ul>
+<h2>6. Chat app on Azure Static Web Apps</h2>
+<ul>
+<li>Build: <code>npm ci &amp;&amp; npm run build -w @tf/chat</code> → output <code>apps/chat/dist</code>, with <code>VITE_API_BASE=https://api.trailforge…/api</code> and <code>VITE_STORE_URL=https://www.trailforge…</code>.</li>
+<li>Deploy with the Static Web Apps GitHub Action (<code>app_location: apps/chat</code>, <code>output_location: dist</code>, <code>skip_app_build</code> after our own build step).</li>
+<li>SPA fallback route (<code>staticwebapp.config.json</code>: <code>navigationFallback</code> → <code>/index.html</code>).</li>
+<li>It calls the gateway directly (CORS), keeping the token in localStorage. This is the deliberate contrast with the storefront&#39;s cookie BFF.</li>
+</ul>
+<h2>7. Data: migrations, seed, RAG</h2>
+<table>
+<thead>
+<tr>
+<th>Task</th>
+<th>How</th>
+<th>When</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Create databases + run migrations</td>
+<td><code>db-migrate</code> Container Apps job (<code>npm run db:migrate</code>, which creates databases if missing)</td>
+<td>Every deploy, <strong>before</strong> new revisions</td>
+</tr>
+<tr>
+<td>Seed demo data</td>
+<td><code>db-seed</code> job (<code>npm run db:reset</code>, which is <strong>destructive</strong>)</td>
+<td>Once for the demo; never on real data</td>
+</tr>
+<tr>
+<td>Index RAG docs</td>
+<td><code>rag-ingest</code> job (<code>npm run rag:prepare &amp;&amp; npm run rag:ingest</code>)</td>
+<td>After docs change</td>
+</tr>
+<tr>
+<td>Backups</td>
+<td>Flexible Server automatic backups (7 days); point-in-time restore</td>
+<td>Always on</td>
+</tr>
+</tbody></table>
+<p>Migrations must be <strong>backwards-compatible</strong> (add columns/tables first, remove later), because the old revision keeps serving traffic while the new one starts.</p>
+<h2>8. CI/CD (GitHub Actions)</h2>
+<pre><code>pull request ─► ci.yml: typecheck · build web/chat · API smoke test (Postgres service container)
+             └► Vercel: preview deployment (Git integration)
+
+push to main ─► ci.yml (same checks)
+             ├► deploy-azure.yml:
+             │     1. azure/login (OIDC federated credential, no secrets stored)
+             │     2. az acr build per changed service  (tag = git SHA)
+             │     3. start db-migrate job, wait for success
+             │     4. az containerapp update --image …:&lt;sha&gt;   (new revision; old one kept)
+             │     5. smoke test against https://api.trailforge…/healthz
+             ├► deploy-chat.yml: build apps/chat → Static Web Apps
+             └► Vercel: production deployment of apps/web (Git integration)
+</code></pre>
+<ul>
+<li><strong>Azure auth:</strong> a GitHub OIDC federated credential on an Entra app registration with <code>AcrPush</code> + <code>Contributor</code> on the resource group. No long-lived secrets in GitHub.</li>
+<li><strong>Rollback:</strong> Container Apps keeps old revisions (<code>az containerapp revision activate</code>); Vercel has instant rollback to any previous deployment.</li>
+</ul>
+<h2>9. Domains &amp; TLS</h2>
+<table>
+<thead>
+<tr>
+<th>Host</th>
+<th>Points to</th>
+<th>Certificate</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>www.trailforge…</code> (+ apex redirect)</td>
+<td>Vercel</td>
+<td>Vercel-managed</td>
+</tr>
+<tr>
+<td><code>api.trailforge…</code></td>
+<td>gateway Container App</td>
+<td>Container Apps managed certificate</td>
+</tr>
+<tr>
+<td><code>chat.trailforge…</code></td>
+<td>Static Web Apps</td>
+<td>SWA-managed</td>
+</tr>
+</tbody></table>
+<p>Until a domain is bought, use the default <code>*.vercel.app</code>, <code>*.azurecontainerapps.io</code> and <code>*.azurestaticapps.net</code> URLs, and put them in <code>ALLOWED_ORIGINS</code> / <code>GATEWAY_URL</code>.</p>
+<h2>10. Observability</h2>
+<ul>
+<li><strong>Azure:</strong> Container Apps console logs → Log Analytics; OpenTelemetry → Application Insights (Phase 10) with request traces across gateway → services; alerts on 5xx rate, p95 latency, Postgres CPU/storage, OpenAI 429s.</li>
+<li><strong>Agent traces:</strong> the custom Agents SDK trace processor writes runs, tool calls and guardrail trips to <code>tf_assistant</code> (viewable in the admin console).</li>
+<li><strong>Vercel:</strong> function logs and Observability for the storefront; Web Analytics / Speed Insights optional.</li>
+</ul>
+<h2>11. Cost estimate (monthly, learning scale)</h2>
+<table>
+<thead>
+<tr>
+<th>Item</th>
+<th>Approx.</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>PostgreSQL Flexible Server B1ms + 32 GB</td>
+<td>~$15–25</td>
+</tr>
+<tr>
+<td>Container Apps (consumption; 2 apps with min 1 replica, rest scale to zero)</td>
+<td>~$10–40</td>
+</tr>
+<tr>
+<td>Container Registry Basic</td>
+<td>~$5</td>
+</tr>
+<tr>
+<td>Azure AI Search <strong>Basic</strong> (or Free: $0, no semantic ranker)</td>
+<td>~$75 (or $0)</td>
+</tr>
+<tr>
+<td>Azure OpenAI tokens (light use)</td>
+<td>~$1–10</td>
+</tr>
+<tr>
+<td>Log Analytics / App Insights</td>
+<td>~$2–10</td>
+</tr>
+<tr>
+<td>Static Web Apps Free, Key Vault</td>
+<td>~$0–1</td>
+</tr>
+<tr>
+<td>Vercel Hobby (personal, non-commercial) / Pro</td>
+<td>$0 / $20</td>
+</tr>
+<tr>
+<td><strong>Total</strong></td>
+<td><strong>≈ $35–60 with Free search, ≈ $110–135 with Basic search</strong></td>
+</tr>
+</tbody></table>
+<p>These are rough estimates; check the Azure pricing calculator and Vercel pricing. Delete the resource group when you&#39;re done practising (<code>az group delete -n rg-trailforge-prod</code>).</p>
+<h2>12. Rollout steps</h2>
+<ol>
+<li><input disabled="" type="checkbox"> Make the code changes in §3; verify locally with <code>docker build</code> + <code>docker run</code> for one service</li>
+<li><input disabled="" type="checkbox"> Write Bicep (<code>infra/azure/main.bicep</code>); <code>az deployment group what-if</code>, then deploy</li>
+<li><input disabled="" type="checkbox"> Store secrets in Key Vault; grant the Managed Identity its roles (AcrPull, Key Vault Secrets User, OpenAI User, Search Index Data Reader)</li>
+<li><input disabled="" type="checkbox"> Build and push images (<code>az acr build</code>); run <code>db-migrate</code>, then <code>db-seed</code> once</li>
+<li><input disabled="" type="checkbox"> Deploy Container Apps; check <code>/healthz</code> on the gateway; check internal calls in the logs</li>
+<li><input disabled="" type="checkbox"> Run <code>rag-ingest</code>; test a search query</li>
+<li><input disabled="" type="checkbox"> Create the Vercel project (root <code>apps/web</code>), set env vars, deploy; log in as the demo user</li>
+<li><input disabled="" type="checkbox"> Build and deploy the chat app to Static Web Apps; add its origin to <code>ALLOWED_ORIGINS</code></li>
+<li><input disabled="" type="checkbox"> Set up GitHub Actions (OIDC) + Vercel Git integration</li>
+<li><input disabled="" type="checkbox"> Custom domains + TLS</li>
+<li><input disabled="" type="checkbox"> Go-live checklist (§13)</li>
+</ol>
+<h2>13. Go-live checklist</h2>
+<ul>
+<li><input disabled="" type="checkbox"> <code>DEV_QUICK_LOGIN</code> off: <code>GET https://api…/api/dev/accounts</code> returns <strong>404</strong></li>
+<li><input disabled="" type="checkbox"> <code>JWT_SECRET</code> and <code>INTERNAL_TOKEN</code> are strong random values from Key Vault (not the dev defaults)</li>
+<li><input disabled="" type="checkbox"> Only the gateway has external ingress; <code>customer</code>, <code>order</code>, … are unreachable from the internet</li>
+<li><input disabled="" type="checkbox"> <code>/internal/*</code> routes are never exposed by the gateway (they need <code>x-internal-token</code>)</li>
+<li><input disabled="" type="checkbox"> CORS allows only the storefront and chat origins</li>
+<li><input disabled="" type="checkbox"> Rate limits on login and chat</li>
+<li><input disabled="" type="checkbox"> Postgres: TLS required, backups on, not open to <code>0.0.0.0/0</code></li>
+<li><input disabled="" type="checkbox"> Azure OpenAI / Search reached with Managed Identity (no keys in env)</li>
+<li><input disabled="" type="checkbox"> Session cookie <code>secure</code> + <code>httpOnly</code> on the Vercel domain</li>
+<li><input disabled="" type="checkbox"> Guardrails (Phase 8) enabled; refunds over $100 still require admin approval</li>
+<li><input disabled="" type="checkbox"> Smoke test + red-team eval pass against production</li>
+<li><input disabled="" type="checkbox"> Budget alert on the resource group</li>
+</ul>
+</main></div></body></html>

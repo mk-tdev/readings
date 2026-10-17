@@ -210,9 +210,12 @@ Both are built on `@tf/mcp-kit` (`packages/mcp-kit`): Streamable HTTP at `POST /
 - The agent is built per chat request with `mcpServers: <connected servers>` + private function tools (`get_my_orders`, `get_order_details`, `get_my_offers`, `get_my_profile`).
 - If a server is down, its fallback function tools are added instead (`search_products`, `get_product_details`, `get_public_promotions`), so names never clash.
 - **Rule:** public data via MCP; per-user data via function tools (MCP connections have fixed headers and can't carry each user's JWT). mcp-promotions calls the promotion API anonymously, so member-only offers can't leak through it.
-- `GET /api/admin/assistant/status` → `{ model, mcp: [{ name, connected, tools[] }] }`.
+- `GET /api/admin/assistant/status` → `{ model, provider: { requested, chat, chatModel, embeddings, embeddingModel, tracing, problems }, mcp: [{ name, connected, tools[] }] }`.
 
-Checks: `npm run smoke:mcp` (19 read-only checks); `npm run mcp:inspector` for a UI.
+Checks: `npm run smoke:mcp` (19 read-only checks). Standalone: `npm run mcp:standalone` (catalog + inventory + promotion services, both MCP servers, MCP Inspector web UI with both servers from `scripts/mcp/inspector.json`). CLI: `npm run mcp:cli -- --server catalog --method tools/list`.
+
+## AI provider (`packages/shared/src/ai.ts`)
+`MODEL_PROVIDER=azure|openai|auto` (auto: Azure if `AZURE_OPENAI_ENDPOINT`, else OpenAI if `OPENAI_API_KEY`). `EMBEDDING_PROVIDER` defaults to the chat provider; ingest and queries must use the same one. Models: `AZURE_OPENAI_CHAT_DEPLOYMENT` / `OPENAI_CHAT_MODEL`, `AZURE_OPENAI_EMBEDDING_DEPLOYMENT` / `OPENAI_EMBEDDING_MODEL`. Tracing to the OpenAI dashboard only when `OPENAI_AGENTS_DISABLE_TRACING=false` and `OPENAI_API_KEY` is set.
 
 ## Seed source data formats
 

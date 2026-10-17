@@ -72,7 +72,7 @@ By the end, the user should be able to explain and build:
 | Web app | **Next.js 16 (App Router)**: Server Components, Route Handlers, a `proxy.ts` route guard, auth in an httpOnly cookie |
 | Chat app | **React 19 + Vite** SPA |
 | Shared chat UI | `packages/chat-ui`: React components (`ChatWidget`, `ChatPage`, `useChat`), manual SSE parsing |
-| AI | **OpenAI Agents SDK (`@openai/agents` 0.20)**, `openai` SDK, **Azure OpenAI** (`gpt-5-mini`, `text-embedding-3-small`) through the v1 endpoint, Entra ID via `@azure/identity` |
+| AI | **OpenAI Agents SDK (`@openai/agents` 0.20)**, `openai` SDK, **Azure OpenAI** (`gpt-5-mini`, `text-embedding-3-small`) through the v1 endpoint, Entra ID via `@azure/identity`; or **OpenAI platform** with `MODEL_PROVIDER=openai` (auto-detected when only `OPENAI_API_KEY` is set) |
 | Retrieval | **Azure AI Search** (`@azure/search-documents`): indexes `tf-products`, `tf-knowledge` |
 | Tools protocol | **MCP** (`@modelcontextprotocol/sdk`, Streamable HTTP) |
 | Seed data | `@faker-js/faker` with a fixed seed (deterministic) |
@@ -173,8 +173,8 @@ Full checklist per phase: **`research/implementation-plan.md` §12**. Deployment
 | 2. Microservices + seed | ✅ |
 | 3. Next.js storefront, admin console, auth, order stages | ✅ |
 | 4. Azure AI foundation + RAG data/ingest/eval | 🟡 docs + scripts done · 🔒 Azure not provisioned |
-| 5. Assistant core (search tools, MCP, streaming) | 🟡 MCP servers (catalog, promotions) done; search tools need Azure |
-| 6. Login-aware chat & memory | 🟡 built, needs live-model test |
+| 5. Assistant core (search tools, MCP, streaming) | 🟡 MCP + live streaming verified with OpenAI; `search_knowledge` needs Azure AI Search |
+| 6. Login-aware chat & memory | ✅ verified live |
 | 7. Multi-agent (handoffs, agents as tools, structured output) | ⬜ |
 | 8. Guardrails & safety (8a deterministic can start now) | ⬜ |
 | 9. Agentic workflows + human-in-the-loop | ⬜ |
@@ -190,7 +190,6 @@ Full checklist per phase: **`research/implementation-plan.md` §12**. Deployment
 MCP servers (catalog, promotions) are built and connected. See `research/mcp-guide.md`.
 
 **Known gaps:**
-- Token-by-token chat streaming isn't proven yet (no model is connected).
 - Many knowledge docs are short (avg ~360 words) and could be expanded.
 - A missing order page under `/account/orders/...` returns 200 with a not-found page instead of a 404.
 

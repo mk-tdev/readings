@@ -173,14 +173,33 @@ Then restart the assistant (`npm run dev`, or `npm run dev:assistant`) and check
 
 `gpt-5-mini` is a **reasoning model**: it doesn't accept `temperature`. Use reasoning effort settings instead if you tune it.
 
-## 9. Quotas, cost and regions
+## 9. Using a platform.openai.com key instead (or alongside)
+
+TrailForge can use **either** provider with the same code (`packages/shared/src/ai.ts`):
+
+| `.env` | Result |
+|---|---|
+| `OPENAI_API_KEY=sk-…` and no `AZURE_OPENAI_ENDPOINT` | `MODEL_PROVIDER=auto` picks **OpenAI**. Quickest way to try the assistant before Azure exists |
+| `AZURE_OPENAI_ENDPOINT=…` set | `auto` picks **Azure** |
+| `MODEL_PROVIDER=openai` / `azure` | Force one, even when both are configured |
+| `OPENAI_CHAT_MODEL`, `OPENAI_EMBEDDING_MODEL` | Model names on OpenAI (default `gpt-5-mini`, `text-embedding-3-small`) |
+| `EMBEDDING_PROVIDER=azure` / `openai` | RAG embeddings from a different provider than chat. Keep `rag:ingest` and queries on the **same** embedding provider |
+| `OPENAI_AGENTS_DISABLE_TRACING=false` (+ `OPENAI_API_KEY`) | The Agents SDK uploads traces (model calls, tool calls) to platform.openai.com → **Traces**. Great for learning; note that it sends prompts and tool results to OpenAI even when chat runs on Azure |
+
+Check what's active: the assistant logs `model provider: openai (gpt-5-mini) [auto-detected]` at startup, and `GET /api/admin/assistant/status` returns the `provider` block.
+
+**Using both at once:** the Agents SDK lets each agent use its own model/provider. For example, keep the main assistant on Azure and run a cheap guardrail classifier on OpenAI. That's planned for the guardrails phase (per-agent `model` with an `OpenAIProvider` for the second client).
+
+**Differences to keep in mind:** with OpenAI, data goes to OpenAI's platform (not your Azure tenant), auth is always an API key (no Entra ID/Managed Identity), and billing is on your OpenAI account. Keep the key only in the git-ignored `.env`.
+
+## 10. Quotas, cost and regions
 
 - **TPM (tokens per minute)** per deployment; requests per minute follows from it. Going over gives **HTTP 429**. The `openai` SDK retries automatically with back-off. Raise capacity on the deployment (Foundry → Deployments → Edit) or request more quota.
 - **Cost:** pay per token (input and output priced separately; embeddings are very cheap). Learning-scale use is typically a few dollars a month. Check current prices on the Azure OpenAI pricing page.
 - **Deployment types:** *Global Standard* processes in any Azure region (cheapest, most capacity). *Data Zone* keeps processing in a geography (US/EU). *Standard* keeps it in the resource's region. Choose based on data-residency needs.
 - **Clean up** when you stop practising: `az group delete -n rg-trailforge` (deletes everything in the group).
 
-## 10. Troubleshooting
+## 11. Troubleshooting
 
 | Error | Cause | Fix |
 |---|---|---|
@@ -192,9 +211,9 @@ Then restart the assistant (`npm run dev`, or `npm run dev:assistant`) and check
 | `400 … temperature` | Reasoning model parameter | Don't send `temperature` to `gpt-5-mini` |
 | `content_filter` | Prompt or output blocked | Rephrase; check the content filter settings in Foundry |
 | `DefaultAzureCredential failed to retrieve a token` | Not logged in | `az login` (and `az account set` to the right subscription) |
-| Assistant says "not configured" | `AZURE_OPENAI_ENDPOINT` empty when the assistant started | Fill `.env`, restart the assistant |
+| Assistant says "not configured" | Neither `AZURE_OPENAI_ENDPOINT` nor `OPENAI_API_KEY` set when the assistant started (or `MODEL_PROVIDER` forces one that's empty) | Fill `.env`, restart the assistant; check the `problems` list in `/api/admin/assistant/status` |
 
-## 11. Checklist
+## 12. Checklist
 
 - [ ] Region chosen where both models are available; quota checked
 - [ ] Resource group + Azure OpenAI resource created

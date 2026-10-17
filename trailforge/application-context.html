@@ -120,7 +120,7 @@ Companion course repo: <a href="https://github.com/mk-tdev/agentic-ai">https://g
 </tr>
 <tr>
 <td>AI</td>
-<td><strong>OpenAI Agents SDK (<code>@openai/agents</code> 0.20)</strong>, <code>openai</code> SDK, <strong>Azure OpenAI</strong> (<code>gpt-5-mini</code>, <code>text-embedding-3-small</code>) through the v1 endpoint, Entra ID via <code>@azure/identity</code></td>
+<td><strong>OpenAI Agents SDK (<code>@openai/agents</code> 0.20)</strong>, <code>openai</code> SDK, <strong>Azure OpenAI</strong> (<code>gpt-5-mini</code>, <code>text-embedding-3-small</code>) through the v1 endpoint, Entra ID via <code>@azure/identity</code>; or <strong>OpenAI platform</strong> with <code>MODEL_PROVIDER=openai</code> (auto-detected when only <code>OPENAI_API_KEY</code> is set)</td>
 </tr>
 <tr>
 <td>Retrieval</td>
@@ -313,11 +313,11 @@ npm run typecheck &amp;&amp; npm run build -w @tf/web
 </tr>
 <tr>
 <td>5. Assistant core (search tools, MCP, streaming)</td>
-<td>🟡 MCP servers (catalog, promotions) done; search tools need Azure</td>
+<td>🟡 MCP + live streaming verified with OpenAI; <code>search_knowledge</code> needs Azure AI Search</td>
 </tr>
 <tr>
 <td>6. Login-aware chat &amp; memory</td>
-<td>🟡 built, needs live-model test</td>
+<td>✅ verified live</td>
 </tr>
 <tr>
 <td>7. Multi-agent (handoffs, agents as tools, structured output)</td>
@@ -353,7 +353,6 @@ npm run typecheck &amp;&amp; npm run build -w @tf/web
 <p>MCP servers (catalog, promotions) are built and connected. See <code>research/mcp-guide.md</code>.</p>
 <p><strong>Known gaps:</strong></p>
 <ul>
-<li>Token-by-token chat streaming isn&#39;t proven yet (no model is connected).</li>
 <li>Many knowledge docs are short (avg ~360 words) and could be expanded.</li>
 <li>A missing order page under <code>/account/orders/...</code> returns 200 with a not-found page instead of a 404.</li>
 </ul>

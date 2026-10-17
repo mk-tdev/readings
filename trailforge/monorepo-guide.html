@@ -318,8 +318,16 @@ npm run typecheck -w @tf/chat-ui
 <td>One part</td>
 </tr>
 <tr>
-<td><code>npm run smoke:mcp</code> / <code>mcp:inspector</code></td>
-<td>Test the MCP servers / open the MCP Inspector UI</td>
+<td><code>npm run smoke:mcp</code></td>
+<td>Test the MCP servers (19 checks)</td>
+</tr>
+<tr>
+<td><code>npm run mcp:standalone</code></td>
+<td>Only what the MCP servers need (catalog, inventory, promotion) + both MCP servers + MCP Inspector web UI</td>
+</tr>
+<tr>
+<td><code>npm run mcp:inspector</code> / <code>mcp:inspect:catalog</code> / <code>mcp:inspect:promotions</code> / <code>mcp:cli</code></td>
+<td>MCP Inspector web UI (both servers / one server) or its CLI</td>
 </tr>
 <tr>
 <td><code>npm run typecheck</code></td>

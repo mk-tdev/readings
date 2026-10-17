@@ -510,9 +510,11 @@ returns:   delivered ──► partially_returned / returned   (refund + restock
 <li>The agent is built per chat request with <code>mcpServers: &lt;connected servers&gt;</code> + private function tools (<code>get_my_orders</code>, <code>get_order_details</code>, <code>get_my_offers</code>, <code>get_my_profile</code>).</li>
 <li>If a server is down, its fallback function tools are added instead (<code>search_products</code>, <code>get_product_details</code>, <code>get_public_promotions</code>), so names never clash.</li>
 <li><strong>Rule:</strong> public data via MCP; per-user data via function tools (MCP connections have fixed headers and can&#39;t carry each user&#39;s JWT). mcp-promotions calls the promotion API anonymously, so member-only offers can&#39;t leak through it.</li>
-<li><code>GET /api/admin/assistant/status</code> → <code>{ model, mcp: [{ name, connected, tools[] }] }</code>.</li>
+<li><code>GET /api/admin/assistant/status</code> → <code>{ model, provider: { requested, chat, chatModel, embeddings, embeddingModel, tracing, problems }, mcp: [{ name, connected, tools[] }] }</code>.</li>
 </ul>
-<p>Checks: <code>npm run smoke:mcp</code> (19 read-only checks); <code>npm run mcp:inspector</code> for a UI.</p>
+<p>Checks: <code>npm run smoke:mcp</code> (19 read-only checks). Standalone: <code>npm run mcp:standalone</code> (catalog + inventory + promotion services, both MCP servers, MCP Inspector web UI with both servers from <code>scripts/mcp/inspector.json</code>). CLI: <code>npm run mcp:cli -- --server catalog --method tools/list</code>.</p>
+<h2>AI provider (<code>packages/shared/src/ai.ts</code>)</h2>
+<p><code>MODEL_PROVIDER=azure|openai|auto</code> (auto: Azure if <code>AZURE_OPENAI_ENDPOINT</code>, else OpenAI if <code>OPENAI_API_KEY</code>). <code>EMBEDDING_PROVIDER</code> defaults to the chat provider; ingest and queries must use the same one. Models: <code>AZURE_OPENAI_CHAT_DEPLOYMENT</code> / <code>OPENAI_CHAT_MODEL</code>, <code>AZURE_OPENAI_EMBEDDING_DEPLOYMENT</code> / <code>OPENAI_EMBEDDING_MODEL</code>. Tracing to the OpenAI dashboard only when <code>OPENAI_AGENTS_DISABLE_TRACING=false</code> and <code>OPENAI_API_KEY</code> is set.</p>
 <h2>Seed source data formats</h2>
 <p><code>data/products.json</code>:</p>
 <pre><code class="language-jsonc">{

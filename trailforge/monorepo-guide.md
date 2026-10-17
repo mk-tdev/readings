@@ -158,7 +158,9 @@ npm run typecheck -w @tf/chat-ui
 | `npm run dev:services` | Only the 7 domain services + gateway |
 | `npm run dev:mcp` | The two MCP servers |
 | `npm run dev:assistant` / `dev:web` / `dev:chat` | One part |
-| `npm run smoke:mcp` / `mcp:inspector` | Test the MCP servers / open the MCP Inspector UI |
+| `npm run smoke:mcp` | Test the MCP servers (19 checks) |
+| `npm run mcp:standalone` | Only what the MCP servers need (catalog, inventory, promotion) + both MCP servers + MCP Inspector web UI |
+| `npm run mcp:inspector` / `mcp:inspect:catalog` / `mcp:inspect:promotions` / `mcp:cli` | MCP Inspector web UI (both servers / one server) or its CLI |
 | `npm run typecheck` | `tsc -b` over all backend packages |
 | `npm run rag:prepare` / `rag:ingest` | RAG data pipeline |
 | `npm run research:html` | Re-render `research/*.md` to HTML |

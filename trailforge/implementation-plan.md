@@ -176,7 +176,7 @@ Streaming caveat: output guardrails run after the full answer, so high-stakes an
 | Function tools (zod), error handling | Public + private tools | ✅ |
 | RunContext (local context) | customerId, role, JWT: never sent to the LLM | ✅ |
 | Sessions (custom Postgres session) | Chat memory survives restarts and login | ✅ |
-| Streaming events → SSE | Text deltas, tool calls, auth prompts | ✅ (handoff events in Phase 7) |
+| Streaming events → SSE | Text deltas, tool calls, auth prompts (verified live) | ✅ (handoff events in Phase 7) |
 | `isEnabled` on tools | Admin-only tools hidden from customers | ⬜ Phase 7 |
 | MCP servers (Streamable HTTP), `connectMcpServers`, tool cache | catalog / promotion MCP | ✅ (tool filters + MCP tool guardrails in Phase 8) |
 | Agents as tools (`asTool`) | Product Expert used from Deals | ⬜ Phase 7 |
@@ -185,9 +185,9 @@ Streaming caveat: output guardrails run after the full answer, so high-stakes an
 | Input / output / tool guardrails | See §9 | ⬜ Phase 8 |
 | Human-in-the-loop (`needsApproval`, interruptions, `RunState` serialize/resume) | Large refunds, campaigns, restock | ⬜ Phase 9 |
 | Code vs LLM orchestration | Workflows vs handoffs | ⬜ Phase 9 |
-| Tracing (custom processor, `withTrace`, custom spans) | Traces in Postgres + admin trace viewer | ⬜ Phase 10 |
+| Tracing (custom processor, `withTrace`, custom spans) | Optional OpenAI dashboard tracing now (`OPENAI_AGENTS_DISABLE_TRACING=false`); Postgres processor + admin viewer in Phase 10 | 🟡 |
 | Lifecycle hooks / run events | Audit log, token usage | ⬜ Phase 10 |
-| Model providers / per-agent models | Azure OpenAI; cheaper model for classifiers | ⬜ Phase 8 |
+| Model providers / per-agent models | `MODEL_PROVIDER` switch (Azure OpenAI / OpenAI) ✅; per-agent providers for classifiers in Phase 8 | 🟡 |
 | Realtime voice agents | "Talk to support" mic button | ⬜ Phase 12 (stretch) |
 
 ## 11. Tech stack
@@ -211,8 +211,8 @@ Streaming caveat: output guardrails run after the full answer, so high-stakes an
 | 2 | Microservices REST APIs + seed (30 users, 100 orders) | Queryable data, smoke-tested | ✅ |
 | 3 | Next.js storefront, admin console, auth, order stages | Working shop + admin | ✅ |
 | 4 | Azure AI foundation + RAG data, ingest & eval set | Search returns good results | 🟡 docs + scripts done · 🔒 Azure |
-| 5 | Assistant core: search tools, MCP servers, streaming chat | Pre-login Q&A with citations | 🟡 MCP servers done · search tools 🔒 Azure |
-| 6 | Login-aware chat & memory | Pre/post-login chat | 🟡 built · 🔒 needs live-model test |
+| 5 | Assistant core: search tools, MCP servers, streaming chat | Pre-login Q&A with citations | 🟡 MCP + streaming verified (OpenAI) · `search_knowledge` 🔒 Azure AI Search |
+| 6 | Login-aware chat & memory | Pre/post-login chat | ✅ verified live (session trimming still open) |
 | 7 | Multi-agent: handoffs, agents as tools, structured output | Specialist agents | ⬜ |
 | 8 | Guardrails & safety | Layered protection + red-team eval | ⬜ (8a can start now) |
 | 9 | Agentic workflows + human-in-the-loop | Automated refunds, promos, campaigns, restock | ⬜ |
@@ -258,13 +258,14 @@ Streaming caveat: output guardrails run after the full answer, so high-stakes an
 - [x] MCP servers `mcp-catalog` (5 tools, resource + template, prompt) and `mcp-promotions` (3 tools, resource, prompt) on a shared `@tf/mcp-kit` host (Streamable HTTP, stateless)
 - [x] Assistant connects with `connectMcpServers` (`dropFailed`, 30 s retry); falls back to local function tools when a server is down; `/api/admin/assistant/status`
 - [x] `npm run smoke:mcp` (19 checks) and `npm run mcp:inspector`
-- [ ] 🔒 Verify token-by-token streaming end to end with a live model
+- [x] Model provider switch: `MODEL_PROVIDER=azure|openai|auto` (+ `EMBEDDING_PROVIDER`); OpenAI key works today, Azure when provisioned
+- [x] Verified end to end with a live model (OpenAI `gpt-5-mini`): MCP `search_products` chosen with filters, token-by-token streaming
 
 ### Phase 6: Login-aware chat & memory 🟡
 - [x] `AUTH_REQUIRED` tool result → `auth_required` SSE event → Log in button in the chat
 - [x] Guest conversation adopted on login; other users get a fresh conversation
 - [x] Dynamic instructions per user; history endpoint for the UI
-- [ ] 🔒 Live-model test of the whole pre-login → login → continue flow
+- [x] Live-model test of pre-login → `auth_required` → login → same conversation continues with private tools (OpenAI provider)
 - [ ] Session trimming (keep the last N turns) to control token cost
 
 ### Phase 7: Multi-agent ⬜

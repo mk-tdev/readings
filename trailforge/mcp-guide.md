@@ -160,11 +160,38 @@ Other methods to try: `initialize`, `tools/list`, `resources/list`, `resources/t
 
 ## 5. Running and testing
 
+### Standalone: just the MCP servers, nothing else
 ```bash
-npm run dev:services          # the REST services the MCP servers call
-npm run dev:mcp               # mcp-catalog :4201 + mcp-promotions :4202 (also part of npm run dev)
-npm run smoke:mcp             # 19 read-only checks with the official MCP client
-npm run mcp:inspector         # opens MCP Inspector → Transport "Streamable HTTP", URL http://localhost:4201/mcp
+npm run db:up            # Postgres
+npm run mcp:standalone   # catalog :4002 + inventory :4003 + promotion :4006 (what the MCP servers call)
+                         # + mcp-catalog :4201 + mcp-promotions :4202
+                         # + MCP Inspector web UI on http://127.0.0.1:6274 (opens in your browser)
+```
+No assistant, web app or AI model is needed. In the Inspector:
+1. Both servers from `scripts/mcp/inspector.json` are listed. Toggle **catalog** on.
+2. **Tools** tab → `search_products` → `{"query":"tent","maxPriceDollars":400}` → *Run*. Then `check_stock`, `get_product`.
+3. **Resources** tab → `catalog://categories`; the template `catalog://products/{slug}`.
+4. **Prompts** tab → `compare_products`.
+5. The right-hand **Messages** panel shows every JSON-RPC message (`initialize`, `tools/list`, `tools/call`…). This is the protocol itself.
+6. Toggle **promotions** on and try `check_promo_code` with `GOLD15`: you get "log in to use", because it only sees public promotions.
+
+The Inspector prints a URL with a one-time `MCP_INSPECTOR_API_TOKEN`; it protects the Inspector's own local proxy. Set `MCP_AUTO_OPEN_ENABLED=false` to stop it opening a browser tab.
+
+### All MCP scripts
+| Script | What it does |
+|---|---|
+| `npm run mcp:standalone` | The three REST services + both MCP servers + Inspector web UI, in one terminal |
+| `npm run mcp:deps` | Only the three REST services (catalog, inventory, promotion) |
+| `npm run dev:mcp` | Only the two MCP servers (also part of `npm run dev`) |
+| `npm run mcp:inspector` | Inspector web UI with both servers (`scripts/mcp/inspector.json`) |
+| `npm run mcp:inspect:catalog` / `mcp:inspect:promotions` | Inspector web UI connected to one server |
+| `npm run mcp:cli -- --server catalog --method tools/list` | Inspector **CLI**: one call, JSON output (scriptable) |
+| `npm run mcp:cli -- --server promotions --method tools/call --tool-name check_promo_code --tool-arg code=FALLTRAIL20 subtotalDollars=150` | Call a tool from the terminal |
+| `npm run smoke:mcp` | 19 automated checks with the official MCP client |
+
+### With the full app
+```bash
+npm run dev              # everything; the assistant connects to both MCP servers
 ```
 
 `npm run smoke:mcp` connects exactly like a real host. It lists and calls every tool, reads every resource (including the template), fetches every prompt, and checks the error cases (unknown slug → `isError`, expired code, member-only code → "log in").

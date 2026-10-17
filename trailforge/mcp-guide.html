@@ -280,10 +280,65 @@ new Agent({ tools: [...privateTools, ...fallbacks], mcpServers: mcp.active, … 
 </code></pre>
 <p>Other methods to try: <code>initialize</code>, <code>tools/list</code>, <code>resources/list</code>, <code>resources/templates/list</code>, <code>resources/read</code> (<code>{&quot;uri&quot;:&quot;promotions://active&quot;}</code>), <code>prompts/list</code>, <code>prompts/get</code>.</p>
 <h2>5. Running and testing</h2>
-<pre><code class="language-bash">npm run dev:services          # the REST services the MCP servers call
-npm run dev:mcp               # mcp-catalog :4201 + mcp-promotions :4202 (also part of npm run dev)
-npm run smoke:mcp             # 19 read-only checks with the official MCP client
-npm run mcp:inspector         # opens MCP Inspector → Transport &quot;Streamable HTTP&quot;, URL http://localhost:4201/mcp
+<h3>Standalone: just the MCP servers, nothing else</h3>
+<pre><code class="language-bash">npm run db:up            # Postgres
+npm run mcp:standalone   # catalog :4002 + inventory :4003 + promotion :4006 (what the MCP servers call)
+                         # + mcp-catalog :4201 + mcp-promotions :4202
+                         # + MCP Inspector web UI on http://127.0.0.1:6274 (opens in your browser)
+</code></pre>
+<p>No assistant, web app or AI model is needed. In the Inspector:</p>
+<ol>
+<li>Both servers from <code>scripts/mcp/inspector.json</code> are listed. Toggle <strong>catalog</strong> on.</li>
+<li><strong>Tools</strong> tab → <code>search_products</code> → <code>{&quot;query&quot;:&quot;tent&quot;,&quot;maxPriceDollars&quot;:400}</code> → <em>Run</em>. Then <code>check_stock</code>, <code>get_product</code>.</li>
+<li><strong>Resources</strong> tab → <code>catalog://categories</code>; the template <code>catalog://products/{slug}</code>.</li>
+<li><strong>Prompts</strong> tab → <code>compare_products</code>.</li>
+<li>The right-hand <strong>Messages</strong> panel shows every JSON-RPC message (<code>initialize</code>, <code>tools/list</code>, <code>tools/call</code>…). This is the protocol itself.</li>
+<li>Toggle <strong>promotions</strong> on and try <code>check_promo_code</code> with <code>GOLD15</code>: you get &quot;log in to use&quot;, because it only sees public promotions.</li>
+</ol>
+<p>The Inspector prints a URL with a one-time <code>MCP_INSPECTOR_API_TOKEN</code>; it protects the Inspector&#39;s own local proxy. Set <code>MCP_AUTO_OPEN_ENABLED=false</code> to stop it opening a browser tab.</p>
+<h3>All MCP scripts</h3>
+<table>
+<thead>
+<tr>
+<th>Script</th>
+<th>What it does</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>npm run mcp:standalone</code></td>
+<td>The three REST services + both MCP servers + Inspector web UI, in one terminal</td>
+</tr>
+<tr>
+<td><code>npm run mcp:deps</code></td>
+<td>Only the three REST services (catalog, inventory, promotion)</td>
+</tr>
+<tr>
+<td><code>npm run dev:mcp</code></td>
+<td>Only the two MCP servers (also part of <code>npm run dev</code>)</td>
+</tr>
+<tr>
+<td><code>npm run mcp:inspector</code></td>
+<td>Inspector web UI with both servers (<code>scripts/mcp/inspector.json</code>)</td>
+</tr>
+<tr>
+<td><code>npm run mcp:inspect:catalog</code> / <code>mcp:inspect:promotions</code></td>
+<td>Inspector web UI connected to one server</td>
+</tr>
+<tr>
+<td><code>npm run mcp:cli -- --server catalog --method tools/list</code></td>
+<td>Inspector <strong>CLI</strong>: one call, JSON output (scriptable)</td>
+</tr>
+<tr>
+<td><code>npm run mcp:cli -- --server promotions --method tools/call --tool-name check_promo_code --tool-arg code=FALLTRAIL20 subtotalDollars=150</code></td>
+<td>Call a tool from the terminal</td>
+</tr>
+<tr>
+<td><code>npm run smoke:mcp</code></td>
+<td>19 automated checks with the official MCP client</td>
+</tr>
+</tbody></table>
+<h3>With the full app</h3>
+<pre><code class="language-bash">npm run dev              # everything; the assistant connects to both MCP servers
 </code></pre>
 <p><code>npm run smoke:mcp</code> connects exactly like a real host. It lists and calls every tool, reads every resource (including the template), fetches every prompt, and checks the error cases (unknown slug → <code>isError</code>, expired code, member-only code → &quot;log in&quot;).</p>
 <h3>Use them from other MCP clients</h3>

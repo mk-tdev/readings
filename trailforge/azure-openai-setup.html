@@ -242,14 +242,51 @@ OPENAI_AGENTS_DISABLE_TRACING=true                     # don&#39;t send traces t
 <li><code>scripts/rag/src/ingest.ts</code> uses the embedding deployment to embed RAG chunks (see the Azure AI Search guide).</li>
 </ul>
 <p><code>gpt-5-mini</code> is a <strong>reasoning model</strong>: it doesn&#39;t accept <code>temperature</code>. Use reasoning effort settings instead if you tune it.</p>
-<h2>9. Quotas, cost and regions</h2>
+<h2>9. Using a platform.openai.com key instead (or alongside)</h2>
+<p>TrailForge can use <strong>either</strong> provider with the same code (<code>packages/shared/src/ai.ts</code>):</p>
+<table>
+<thead>
+<tr>
+<th><code>.env</code></th>
+<th>Result</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>OPENAI_API_KEY=sk-…</code> and no <code>AZURE_OPENAI_ENDPOINT</code></td>
+<td><code>MODEL_PROVIDER=auto</code> picks <strong>OpenAI</strong>. Quickest way to try the assistant before Azure exists</td>
+</tr>
+<tr>
+<td><code>AZURE_OPENAI_ENDPOINT=…</code> set</td>
+<td><code>auto</code> picks <strong>Azure</strong></td>
+</tr>
+<tr>
+<td><code>MODEL_PROVIDER=openai</code> / <code>azure</code></td>
+<td>Force one, even when both are configured</td>
+</tr>
+<tr>
+<td><code>OPENAI_CHAT_MODEL</code>, <code>OPENAI_EMBEDDING_MODEL</code></td>
+<td>Model names on OpenAI (default <code>gpt-5-mini</code>, <code>text-embedding-3-small</code>)</td>
+</tr>
+<tr>
+<td><code>EMBEDDING_PROVIDER=azure</code> / <code>openai</code></td>
+<td>RAG embeddings from a different provider than chat. Keep <code>rag:ingest</code> and queries on the <strong>same</strong> embedding provider</td>
+</tr>
+<tr>
+<td><code>OPENAI_AGENTS_DISABLE_TRACING=false</code> (+ <code>OPENAI_API_KEY</code>)</td>
+<td>The Agents SDK uploads traces (model calls, tool calls) to platform.openai.com → <strong>Traces</strong>. Great for learning; note that it sends prompts and tool results to OpenAI even when chat runs on Azure</td>
+</tr>
+</tbody></table>
+<p>Check what&#39;s active: the assistant logs <code>model provider: openai (gpt-5-mini) [auto-detected]</code> at startup, and <code>GET /api/admin/assistant/status</code> returns the <code>provider</code> block.</p>
+<p><strong>Using both at once:</strong> the Agents SDK lets each agent use its own model/provider. For example, keep the main assistant on Azure and run a cheap guardrail classifier on OpenAI. That&#39;s planned for the guardrails phase (per-agent <code>model</code> with an <code>OpenAIProvider</code> for the second client).</p>
+<p><strong>Differences to keep in mind:</strong> with OpenAI, data goes to OpenAI&#39;s platform (not your Azure tenant), auth is always an API key (no Entra ID/Managed Identity), and billing is on your OpenAI account. Keep the key only in the git-ignored <code>.env</code>.</p>
+<h2>10. Quotas, cost and regions</h2>
 <ul>
 <li><strong>TPM (tokens per minute)</strong> per deployment; requests per minute follows from it. Going over gives <strong>HTTP 429</strong>. The <code>openai</code> SDK retries automatically with back-off. Raise capacity on the deployment (Foundry → Deployments → Edit) or request more quota.</li>
 <li><strong>Cost:</strong> pay per token (input and output priced separately; embeddings are very cheap). Learning-scale use is typically a few dollars a month. Check current prices on the Azure OpenAI pricing page.</li>
 <li><strong>Deployment types:</strong> <em>Global Standard</em> processes in any Azure region (cheapest, most capacity). <em>Data Zone</em> keeps processing in a geography (US/EU). <em>Standard</em> keeps it in the resource&#39;s region. Choose based on data-residency needs.</li>
 <li><strong>Clean up</strong> when you stop practising: <code>az group delete -n rg-trailforge</code> (deletes everything in the group).</li>
 </ul>
-<h2>10. Troubleshooting</h2>
+<h2>11. Troubleshooting</h2>
 <table>
 <thead>
 <tr>
@@ -300,11 +337,11 @@ OPENAI_AGENTS_DISABLE_TRACING=true                     # don&#39;t send traces t
 </tr>
 <tr>
 <td>Assistant says &quot;not configured&quot;</td>
-<td><code>AZURE_OPENAI_ENDPOINT</code> empty when the assistant started</td>
-<td>Fill <code>.env</code>, restart the assistant</td>
+<td>Neither <code>AZURE_OPENAI_ENDPOINT</code> nor <code>OPENAI_API_KEY</code> set when the assistant started (or <code>MODEL_PROVIDER</code> forces one that&#39;s empty)</td>
+<td>Fill <code>.env</code>, restart the assistant; check the <code>problems</code> list in <code>/api/admin/assistant/status</code></td>
 </tr>
 </tbody></table>
-<h2>11. Checklist</h2>
+<h2>12. Checklist</h2>
 <ul>
 <li><input disabled="" type="checkbox"> Region chosen where both models are available; quota checked</li>
 <li><input disabled="" type="checkbox"> Resource group + Azure OpenAI resource created</li>

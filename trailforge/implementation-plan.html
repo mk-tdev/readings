@@ -349,7 +349,7 @@ returns:   delivered ──► partially_returned / returned   (refund = amount 
 </tr>
 <tr>
 <td>Streaming events → SSE</td>
-<td>Text deltas, tool calls, auth prompts</td>
+<td>Text deltas, tool calls, auth prompts (verified live)</td>
 <td>✅ (handoff events in Phase 7)</td>
 </tr>
 <tr>
@@ -394,8 +394,8 @@ returns:   delivered ──► partially_returned / returned   (refund = amount 
 </tr>
 <tr>
 <td>Tracing (custom processor, <code>withTrace</code>, custom spans)</td>
-<td>Traces in Postgres + admin trace viewer</td>
-<td>⬜ Phase 10</td>
+<td>Optional OpenAI dashboard tracing now (<code>OPENAI_AGENTS_DISABLE_TRACING=false</code>); Postgres processor + admin viewer in Phase 10</td>
+<td>🟡</td>
 </tr>
 <tr>
 <td>Lifecycle hooks / run events</td>
@@ -404,8 +404,8 @@ returns:   delivered ──► partially_returned / returned   (refund = amount 
 </tr>
 <tr>
 <td>Model providers / per-agent models</td>
-<td>Azure OpenAI; cheaper model for classifiers</td>
-<td>⬜ Phase 8</td>
+<td><code>MODEL_PROVIDER</code> switch (Azure OpenAI / OpenAI) ✅; per-agent providers for classifiers in Phase 8</td>
+<td>🟡</td>
 </tr>
 <tr>
 <td>Realtime voice agents</td>
@@ -464,13 +464,13 @@ returns:   delivered ──► partially_returned / returned   (refund = amount 
 <td>5</td>
 <td>Assistant core: search tools, MCP servers, streaming chat</td>
 <td>Pre-login Q&amp;A with citations</td>
-<td>🟡 MCP servers done · search tools 🔒 Azure</td>
+<td>🟡 MCP + streaming verified (OpenAI) · <code>search_knowledge</code> 🔒 Azure AI Search</td>
 </tr>
 <tr>
 <td>6</td>
 <td>Login-aware chat &amp; memory</td>
 <td>Pre/post-login chat</td>
-<td>🟡 built · 🔒 needs live-model test</td>
+<td>✅ verified live (session trimming still open)</td>
 </tr>
 <tr>
 <td>7</td>
@@ -552,14 +552,15 @@ returns:   delivered ──► partially_returned / returned   (refund = amount 
 <li><input checked="" disabled="" type="checkbox"> MCP servers <code>mcp-catalog</code> (5 tools, resource + template, prompt) and <code>mcp-promotions</code> (3 tools, resource, prompt) on a shared <code>@tf/mcp-kit</code> host (Streamable HTTP, stateless)</li>
 <li><input checked="" disabled="" type="checkbox"> Assistant connects with <code>connectMcpServers</code> (<code>dropFailed</code>, 30 s retry); falls back to local function tools when a server is down; <code>/api/admin/assistant/status</code></li>
 <li><input checked="" disabled="" type="checkbox"> <code>npm run smoke:mcp</code> (19 checks) and <code>npm run mcp:inspector</code></li>
-<li><input disabled="" type="checkbox"> 🔒 Verify token-by-token streaming end to end with a live model</li>
+<li><input checked="" disabled="" type="checkbox"> Model provider switch: <code>MODEL_PROVIDER=azure|openai|auto</code> (+ <code>EMBEDDING_PROVIDER</code>); OpenAI key works today, Azure when provisioned</li>
+<li><input checked="" disabled="" type="checkbox"> Verified end to end with a live model (OpenAI <code>gpt-5-mini</code>): MCP <code>search_products</code> chosen with filters, token-by-token streaming</li>
 </ul>
 <h3>Phase 6: Login-aware chat &amp; memory 🟡</h3>
 <ul>
 <li><input checked="" disabled="" type="checkbox"> <code>AUTH_REQUIRED</code> tool result → <code>auth_required</code> SSE event → Log in button in the chat</li>
 <li><input checked="" disabled="" type="checkbox"> Guest conversation adopted on login; other users get a fresh conversation</li>
 <li><input checked="" disabled="" type="checkbox"> Dynamic instructions per user; history endpoint for the UI</li>
-<li><input disabled="" type="checkbox"> 🔒 Live-model test of the whole pre-login → login → continue flow</li>
+<li><input checked="" disabled="" type="checkbox"> Live-model test of pre-login → <code>auth_required</code> → login → same conversation continues with private tools (OpenAI provider)</li>
 <li><input disabled="" type="checkbox"> Session trimming (keep the last N turns) to control token cost</li>
 </ul>
 <h3>Phase 7: Multi-agent ⬜</h3>

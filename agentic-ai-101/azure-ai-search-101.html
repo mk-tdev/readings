@@ -1,0 +1,183 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Azure AI Search 101 · Agentic AI on Azure</title>
+<meta name="description" content="A quick primer on Azure AI Search: keyword, vector and hybrid search for RAG." />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/styles/github.min.css" media="(prefers-color-scheme: light)" id="hl-light" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/styles/github-dark.min.css" media="(prefers-color-scheme: dark)" id="hl-dark" />
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/highlight.min.js"></script>
+<style>
+:root { --bg:#ffffff; --bg-soft:#f6f8fa; --text:#1f2328; --muted:#59636e; --border:#d1d9e0;
+  --accent:#2563eb; --accent-soft:#e8f0fe; --code-bg:#f3f4f6; }
+@media (prefers-color-scheme: dark) {
+  :root { --bg:#0d1117; --bg-soft:#151b23; --text:#e6edf3; --muted:#9198a1; --border:#2f3742;
+    --accent:#4c8dff; --accent-soft:#172440; --code-bg:#1b2129; }
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--bg); color: var(--text); }
+body { font: 17px/1.7 Inter, system-ui, -apple-system, "Segoe UI", sans-serif; }
+code, pre { font-family: "JetBrains Mono", ui-monospace, Menlo, monospace; }
+a { color: var(--accent); }
+.wrap { max-width: 760px; margin: 0 auto; padding: 48px 24px 96px; }
+.eyebrow { display: inline-block; font-size: 13px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase;
+  color: var(--accent); background: var(--accent-soft); padding: 4px 10px; border-radius: 999px; margin-bottom: 16px; }
+h1 { font-size: 2.1em; line-height: 1.2; margin: 0 0 8px; }
+h2 { margin-top: 2.2em; padding-top: .4em; border-top: 1px solid var(--border); }
+h3 { margin-top: 1.6em; }
+blockquote { margin: 0 0 1.5em; padding: 10px 16px; border-left: 3px solid var(--accent); background: var(--accent-soft); border-radius: 0 8px 8px 0; color: var(--muted); }
+blockquote p { margin: 0; }
+p, li { color: var(--text); }
+table { border-collapse: collapse; width: 100%; margin: 1.2em 0; font-size: .95em; }
+th, td { border: 1px solid var(--border); padding: 8px 12px; text-align: left; }
+th { background: var(--bg-soft); }
+code { background: var(--code-bg); padding: .15em .4em; border-radius: 5px; font-size: .9em; }
+pre { background: var(--code-bg); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; overflow-x: auto; }
+pre code { background: none; padding: 0; }
+details { background: var(--bg-soft); border: 1px solid var(--border); border-radius: 8px; padding: 10px 14px; margin: .5em 0 1em; }
+summary { cursor: pointer; font-weight: 600; color: var(--accent); }
+hr { border: none; border-top: 1px solid var(--border); margin: 2.5em 0; }
+.footer-links { margin-top: 3em; padding-top: 1.5em; border-top: 1px solid var(--border); color: var(--muted); font-size: .95em; }
+.badge-row { display:flex; gap:8px; flex-wrap:wrap; margin-bottom: 24px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+<a class="hub-link" href="./" style="display:inline-block;margin:0 0 14px;font-size:14px">← 101 primers</a> · <a class="hub-link" href="../" style="font-size:14px">All readings</a>
+<span class="eyebrow">101 · Azure AI Search</span>
+<h1>Azure AI Search 101 — from zero</h1>
+<blockquote>
+<p>A quick, standalone primer. For the deep dive tied to this repo&#39;s actual index schema, ingestion pipeline, and hands-on queries, see <code>guides/07-azure-ai-search.md</code> (in the agentic-ai course).</p>
+</blockquote>
+<h2>What it is</h2>
+<p><strong>Azure AI Search</strong> (formerly &quot;Azure Cognitive Search&quot;) is Azure&#39;s managed search engine. For AI apps it matters because it does three things in one request:</p>
+<ol>
+<li><strong>Keyword search</strong> — classic full-text search (exact terms, names, codes).</li>
+<li><strong>Vector search</strong> — similarity search over embeddings (meaning, paraphrase).</li>
+<li><strong>Hybrid search</strong> — both at once, merged into a single ranked list — which is the recommended default for <strong>RAG</strong> (Retrieval-Augmented Generation): finding the right chunks of your documents to paste into an LLM&#39;s context.</li>
+</ol>
+<h2>Core vocabulary</h2>
+<table>
+<thead>
+<tr>
+<th>Concept</th>
+<th>Meaning</th>
+<th>Analogy</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>Search service</strong></td>
+<td>The Azure resource you provision (tier = capacity + features)</td>
+<td>A database server</td>
+</tr>
+<tr>
+<td><strong>Index</strong></td>
+<td>A schema of fields + the data structures to search them</td>
+<td>A table</td>
+</tr>
+<tr>
+<td><strong>Document</strong></td>
+<td>One JSON record in the index</td>
+<td>A row</td>
+</tr>
+<tr>
+<td><strong>Field attribute</strong></td>
+<td>What you can do with a field</td>
+<td>Column constraints</td>
+</tr>
+</tbody></table>
+<h3>Field attributes you&#39;ll actually use</h3>
+<ul>
+<li><strong><code>key</code></strong> — the unique id of a document. Uploading with an existing key <strong>overwrites</strong> it.</li>
+<li><strong><code>searchable</code></strong> — full-text indexed (for text) or vector-indexed (for vector fields).</li>
+<li><strong><code>filterable</code></strong> — usable in <code>$filter</code> expressions, e.g. <code>source eq &#39;readme.md&#39;</code>.</li>
+<li><strong><code>facetable</code></strong> — lets you get counts-by-value (like a &quot;category&quot; sidebar).</li>
+<li><strong><code>sortable</code></strong> — usable in <code>$orderby</code>.</li>
+</ul>
+<h2>A minimal index schema</h2>
+<pre><code class="language-ts">fields: [
+  { name: &quot;id&quot;,       type: &quot;Edm.String&quot;, key: true },
+  { name: &quot;title&quot;,    type: &quot;Edm.String&quot;, searchable: true },
+  { name: &quot;content&quot;,  type: &quot;Edm.String&quot;, searchable: true },
+  { name: &quot;contentVector&quot;, type: &quot;Collection(Edm.Single)&quot;, searchable: true,
+    vectorSearchDimensions: 1536, vectorSearchProfileName: &quot;default-profile&quot; },
+],
+vectorSearch: {
+  algorithms: [{ name: &quot;hnsw&quot;, kind: &quot;hnsw&quot;, parameters: { metric: &quot;cosine&quot; } }],
+  profiles:   [{ name: &quot;default-profile&quot;, algorithmConfigurationName: &quot;hnsw&quot; }],
+},
+</code></pre>
+<p><code>Collection(Edm.Single)</code> is just &quot;an array of 32-bit floats&quot; — a vector. Its dimension <strong>must exactly match</strong> your embedding model&#39;s output size (e.g. 1536 for <code>text-embedding-3-small</code>).</p>
+<h2>The three ways to search</h2>
+<h3>1. Keyword search (BM25)</h3>
+<p>Text fields get tokenized into an inverted index (term → documents). Ranking uses <strong>BM25</strong>: higher score for documents that contain the query terms often, where those terms are rare across the whole index.</p>
+<p>Good at: exact terms, codes, acronyms, names. Bad at: synonyms, paraphrases (&quot;car&quot; won&#39;t match &quot;automobile&quot;).</p>
+<h3>2. Vector search (HNSW)</h3>
+<p>The query text is embedded into a vector; the service finds the nearest document vectors by similarity. Scanning every vector would be slow at scale, so the index builds an <strong>HNSW</strong> graph (Hierarchical Navigable Small World) — a layered graph that lets search hop toward nearby vectors in roughly logarithmic time, trading perfect accuracy for speed (<em>approximate</em> nearest neighbors).</p>
+<p>Good at: meaning, paraphrase, cross-language matches. Bad at: exact rare tokens — &quot;RRF&quot; and &quot;Reciprocal Rank Fusion&quot; are close in meaning but the vector might not surface a literal product code.</p>
+<h3>3. Hybrid search + Reciprocal Rank Fusion (RRF)</h3>
+<p>Send <strong>both</strong> a text query and a vector query in the same request. The service runs both searches, then merges the two ranked lists:</p>
+<pre><code>RRF score(doc) = Σ over each result list   1 / (k + rank_in_that_list)      (k ≈ 60)
+</code></pre>
+<p>Only <strong>ranks</strong> are combined, not raw scores — because BM25 scores and cosine-similarity scores live on different, incomparable scales. A document that ranks well in <em>both</em> lists wins.</p>
+<pre><code class="language-ts">const results = await searchClient.search(queryText, {
+  vectorSearchOptions: {
+    queries: [{ kind: &quot;vector&quot;, vector: queryEmbedding, fields: [&quot;contentVector&quot;], kNearestNeighborsCount: 50 }],
+  },
+  select: [&quot;id&quot;, &quot;title&quot;, &quot;content&quot;],
+  top: 5,
+});
+</code></pre>
+<p>Passing text <strong>and</strong> <code>vectorSearchOptions</code> together is what makes this a hybrid query.</p>
+<h3>Bonus: the semantic ranker</h3>
+<p>An optional second stage that re-scores the top ~50 hybrid results using a cross-encoder model that reads the query and each passage <em>together</em> — more accurate than either BM25 or embedding distance alone, but too slow to run over an entire index, so it only re-ranks the first-stage shortlist.</p>
+<h2>Why this matters for RAG</h2>
+<p>A RAG pipeline is, at its core:</p>
+<ol>
+<li>Chunk your documents.</li>
+<li>Embed each chunk and upload <code>{id, title, content, contentVector}</code> into the index.</li>
+<li>At query time, embed the user&#39;s question, run a hybrid search, take the top N chunks.</li>
+<li>Paste those chunks into the LLM&#39;s context with instructions to cite them.</li>
+</ol>
+<p>Azure AI Search handles step 2 (storage) and step 3 (retrieval) in one managed service — you don&#39;t run your own vector database.</p>
+<h2>Tiers, in short</h2>
+<table>
+<thead>
+<tr>
+<th>Tier</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>Free</strong></td>
+<td>$0, one per subscription, ~50 MB, good for learning</td>
+</tr>
+<tr>
+<td><strong>Basic</strong></td>
+<td>~$75/month billed hourly, several GB, semantic ranker available</td>
+</tr>
+<tr>
+<td><strong>Standard S1+</strong></td>
+<td>Bigger, faster, more replicas/partitions, for production</td>
+</tr>
+</tbody></table>
+<p>Delete the resource when you&#39;re done experimenting — paid tiers bill by the hour whether you use them or not.</p>
+<h2>Check your understanding</h2>
+<ol>
+<li>Why does hybrid search usually beat pure vector search for RAG?<details><summary>Answer</summary>Vectors capture meaning but can miss exact rare terms (codes, names, acronyms) that keyword/BM25 search catches. RRF combines both ranked lists so documents strong in either (especially both) rise to the top.</details></li>
+<li>Why does RRF combine ranks instead of raw scores?<details><summary>Answer</summary>BM25 and cosine-similarity scores are on different, incomparable scales — ranks are the only thing that's directly comparable across the two result lists.</details></li>
+<li>What does the vector field&#39;s dimension have to match, and what happens if it doesn&#39;t?<details><summary>Answer</summary>It must match your embedding model's output size exactly (e.g. 1536). A mismatch causes indexing/query errors — you can't mix embeddings from different-dimension models in one vector field.</details></li>
+</ol>
+<h2>Next steps</h2>
+<ul>
+<li>This repo&#39;s deep dive, with the real index schema and an ingestion pipeline you can run: <code>guides/07-azure-ai-search.md</code> (in the agentic-ai course)</li>
+<li>RAG fundamentals and chunking strategy: <code>guides/06-rag-and-embeddings.md</code> (in the agentic-ai course)</li>
+</ul>
+<p class="footer-links">Part of the <strong>Agentic AI on Azure</strong> course repo · also available as plain Markdown (<code>guides/101/</code>) and in the interactive study site (<code>npm run study</code>).</p>
+</div>
+<script>hljs.highlightAll();</script>
+</body>
+</html>

@@ -1,0 +1,224 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Azure OpenAI 101 · Agentic AI on Azure</title>
+<meta name="description" content="A quick primer on Azure OpenAI: resources, deployments, auth, quotas, content filters." />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/styles/github.min.css" media="(prefers-color-scheme: light)" id="hl-light" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/styles/github-dark.min.css" media="(prefers-color-scheme: dark)" id="hl-dark" />
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/highlight.min.js"></script>
+<style>
+:root { --bg:#ffffff; --bg-soft:#f6f8fa; --text:#1f2328; --muted:#59636e; --border:#d1d9e0;
+  --accent:#2563eb; --accent-soft:#e8f0fe; --code-bg:#f3f4f6; }
+@media (prefers-color-scheme: dark) {
+  :root { --bg:#0d1117; --bg-soft:#151b23; --text:#e6edf3; --muted:#9198a1; --border:#2f3742;
+    --accent:#4c8dff; --accent-soft:#172440; --code-bg:#1b2129; }
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--bg); color: var(--text); }
+body { font: 17px/1.7 Inter, system-ui, -apple-system, "Segoe UI", sans-serif; }
+code, pre { font-family: "JetBrains Mono", ui-monospace, Menlo, monospace; }
+a { color: var(--accent); }
+.wrap { max-width: 760px; margin: 0 auto; padding: 48px 24px 96px; }
+.eyebrow { display: inline-block; font-size: 13px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase;
+  color: var(--accent); background: var(--accent-soft); padding: 4px 10px; border-radius: 999px; margin-bottom: 16px; }
+h1 { font-size: 2.1em; line-height: 1.2; margin: 0 0 8px; }
+h2 { margin-top: 2.2em; padding-top: .4em; border-top: 1px solid var(--border); }
+h3 { margin-top: 1.6em; }
+blockquote { margin: 0 0 1.5em; padding: 10px 16px; border-left: 3px solid var(--accent); background: var(--accent-soft); border-radius: 0 8px 8px 0; color: var(--muted); }
+blockquote p { margin: 0; }
+p, li { color: var(--text); }
+table { border-collapse: collapse; width: 100%; margin: 1.2em 0; font-size: .95em; }
+th, td { border: 1px solid var(--border); padding: 8px 12px; text-align: left; }
+th { background: var(--bg-soft); }
+code { background: var(--code-bg); padding: .15em .4em; border-radius: 5px; font-size: .9em; }
+pre { background: var(--code-bg); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; overflow-x: auto; }
+pre code { background: none; padding: 0; }
+details { background: var(--bg-soft); border: 1px solid var(--border); border-radius: 8px; padding: 10px 14px; margin: .5em 0 1em; }
+summary { cursor: pointer; font-weight: 600; color: var(--accent); }
+hr { border: none; border-top: 1px solid var(--border); margin: 2.5em 0; }
+.footer-links { margin-top: 3em; padding-top: 1.5em; border-top: 1px solid var(--border); color: var(--muted); font-size: .95em; }
+.badge-row { display:flex; gap:8px; flex-wrap:wrap; margin-bottom: 24px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+<a class="hub-link" href="./" style="display:inline-block;margin:0 0 14px;font-size:14px">← 101 primers</a> · <a class="hub-link" href="../" style="font-size:14px">All readings</a>
+<span class="eyebrow">101 · Azure OpenAI</span>
+<h1>Azure OpenAI 101 — from zero</h1>
+<blockquote>
+<p>A quick, standalone primer. For the deep dive tied to this repo&#39;s actual code (the provider-switching function, Entra ID walkthrough, quota/content-filter details, hands-on exercises), see <code>guides/03-azure-openai.md</code> (in the agentic-ai course).</p>
+</blockquote>
+<h2>What it is</h2>
+<p><strong>Azure OpenAI</strong> gives you the same OpenAI model family (GPT, embeddings, etc.) running <strong>inside your own Azure subscription</strong>, instead of calling <code>api.openai.com</code> directly. Same models, same general API shape — different plumbing around it:</p>
+<table>
+<thead>
+<tr>
+<th></th>
+<th>OpenAI</th>
+<th>Azure OpenAI</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Where it runs</td>
+<td>OpenAI&#39;s infrastructure</td>
+<td>Your Azure subscription / network</td>
+</tr>
+<tr>
+<td>Auth</td>
+<td>API key</td>
+<td>API key <strong>or</strong> Microsoft Entra ID (RBAC)</td>
+</tr>
+<tr>
+<td>Billing</td>
+<td>OpenAI account</td>
+<td>Azure subscription / enterprise agreement</td>
+</tr>
+<tr>
+<td>Networking</td>
+<td>Public internet</td>
+<td>Can sit behind a VNet, private endpoints</td>
+</tr>
+<tr>
+<td>Compliance</td>
+<td>OpenAI&#39;s terms</td>
+<td>Azure&#39;s regional data residency, enterprise SLAs</td>
+</tr>
+</tbody></table>
+<p>Most companies that have already standardized on Azure (for compliance, networking, or procurement reasons) use Azure OpenAI for exactly that reason — not because the models differ.</p>
+<h2>The vocabulary: resource → deployment → model</h2>
+<pre><code class="language-text">Azure subscription
+└── Resource group
+    └── Azure OpenAI resource   (e.g. &quot;my-openai-prod&quot;)
+        │   endpoint: https://my-openai-prod.openai.azure.com
+        ├── Deployment &quot;gpt-5-mini&quot;   ──► model gpt-5-mini, with its own quota
+        └── Deployment &quot;embeddings&quot;   ──► model text-embedding-3-small
+</code></pre>
+<ul>
+<li><strong>Resource</strong> — the Azure object you create. Has an endpoint URL, a region, keys, and RBAC role assignments.</li>
+<li><strong>Model</strong> — what OpenAI trained (<code>gpt-5-mini</code>, <code>text-embedding-3-small</code>, …).</li>
+<li><strong>Deployment</strong> — <em>your</em> named instance of a model inside the resource, with its own capacity (quota) and content-filter policy. <strong>On Azure, the <code>model</code> parameter in your API call is actually the deployment name</strong> — this trips up almost everyone the first time. If you deploy <code>gpt-5-mini</code> under the name <code>my-chat</code>, you call it with <code>model: &quot;my-chat&quot;</code>.</li>
+</ul>
+<h2>The endpoint</h2>
+<p>Azure OpenAI exposes an <strong>OpenAI-compatible v1 API</strong>:</p>
+<pre><code class="language-text">https://&lt;resource&gt;.openai.azure.com/openai/v1/
+</code></pre>
+<p>Because it&#39;s compatible, the official <code>openai</code> npm/pip package works unchanged — you only swap the <code>baseURL</code> and credentials:</p>
+<pre><code class="language-ts">import OpenAI from &quot;openai&quot;;
+
+const client = new OpenAI({
+  baseURL: &quot;https://my-openai-prod.openai.azure.com/openai/v1/&quot;,
+  apiKey: process.env.AZURE_OPENAI_API_KEY,
+});
+
+const res = await client.chat.completions.create({
+  model: &quot;gpt-5-mini&quot;, // the DEPLOYMENT name, not necessarily the model name
+  messages: [{ role: &quot;user&quot;, content: &quot;Say hi in one word.&quot; }],
+});
+</code></pre>
+<h2>Authentication: keys vs Microsoft Entra ID</h2>
+<table>
+<thead>
+<tr>
+<th></th>
+<th>API key</th>
+<th>Entra ID (recommended for production)</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>How</td>
+<td>static secret in a header</td>
+<td>short-lived OAuth token for scope <code>https://cognitiveservices.azure.com/.default</code></td>
+</tr>
+<tr>
+<td>Risk if leaked</td>
+<td>full access until manually rotated</td>
+<td>tokens expire (~1h); tied to an identity</td>
+</tr>
+<tr>
+<td>Granularity</td>
+<td>all-or-nothing</td>
+<td><strong>RBAC roles</strong> per user/app, auditable</td>
+</tr>
+</tbody></table>
+<p>The <code>@azure/identity</code> package&#39;s <code>DefaultAzureCredential</code> tries a chain of sources and uses whichever works — your <code>az login</code> session on a laptop, a managed identity in the cloud — so the <em>same code</em> authenticates correctly in both places with zero secrets committed anywhere:</p>
+<pre><code class="language-ts">import { DefaultAzureCredential, getBearerTokenProvider } from &quot;@azure/identity&quot;;
+
+const tokenProvider = getBearerTokenProvider(
+  new DefaultAzureCredential(),
+  &quot;https://cognitiveservices.azure.com/.default&quot;,
+);
+
+const client = new OpenAI({
+  baseURL: &quot;https://my-openai-prod.openai.azure.com/openai/v1/&quot;,
+  apiKey: tokenProvider, // a function the SDK calls before each request
+});
+</code></pre>
+<p><strong>The RBAC role you need to actually call models is &quot;Cognitive Services OpenAI User.&quot;</strong> <em>Contributor</em> can manage the resource (create/delete deployments) but <strong>cannot</strong> call the models — a very common first-day gotcha.</p>
+<h2>Quotas and rate limits</h2>
+<ul>
+<li>Each deployment has <strong>capacity</strong> measured in <strong>TPM</strong> (tokens per minute), which implies a request-per-minute limit too.</li>
+<li>Deployment types: <strong>Standard</strong> (fixed region), <strong>GlobalStandard</strong> (Azure routes to whichever region has capacity — best availability), <strong>DataZone</strong> (stays within a geography like the US/EU), <strong>Provisioned</strong> (reserved throughput).</li>
+<li>Going over your limit returns <strong>HTTP 429</strong> with a <code>retry-after</code> header; most SDKs retry automatically a couple of times.</li>
+</ul>
+<h2>Content filters</h2>
+<p>Every deployment applies a content-filtering policy (hate, violence, self-harm, jailbreak attempts, etc.) to both prompts and completions:</p>
+<ul>
+<li>A blocked <strong>prompt</strong> → <code>400</code> with code <code>content_filter</code>.</li>
+<li>A blocked <strong>completion</strong> → cut short with <code>finish_reason: &quot;content_filter&quot;</code>.</li>
+</ul>
+<p>You can view/customize the policy in Azure AI Foundry; the defaults are reasonable for most apps.</p>
+<h2>Common errors, decoded</h2>
+<table>
+<thead>
+<tr>
+<th>Error</th>
+<th>Usual cause</th>
+<th>Fix</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>401</strong> Unauthorized</td>
+<td>no valid credential</td>
+<td>check your API key is for <em>this</em> resource, or run <code>az login</code></td>
+</tr>
+<tr>
+<td><strong>403</strong> PermissionDenied</td>
+<td>authenticated, but missing role</td>
+<td>assign <strong>Cognitive Services OpenAI User</strong>; wait a few minutes for it to propagate</td>
+</tr>
+<tr>
+<td><strong>404</strong> DeploymentNotFound</td>
+<td>wrong name, or still creating</td>
+<td>list deployments; remember it&#39;s the <em>deployment</em> name, not the model name</td>
+</tr>
+<tr>
+<td><strong>429</strong> Too Many Requests</td>
+<td>over TPM/RPM</td>
+<td>back off and retry, or raise deployment capacity</td>
+</tr>
+<tr>
+<td><strong>400</strong> content_filter</td>
+<td>blocked content</td>
+<td>rephrase, or adjust the filter policy</td>
+</tr>
+</tbody></table>
+<h2>Check your understanding</h2>
+<ol>
+<li>In an Azure OpenAI API call, what goes in the <code>model</code> field?<details><summary>Answer</summary>The deployment name you created in the resource — which may or may not match the underlying model's name.</details></li>
+<li>Why does <code>Contributor</code> access not let you call a model via Entra ID?<details><summary>Answer</summary>Contributor manages the Azure resource itself (create/delete/configure), but calling the inference API requires the separate data-plane role "Cognitive Services OpenAI User".</details></li>
+<li>What&#39;s the practical benefit of <code>DefaultAzureCredential</code> over hardcoding a key?<details><summary>Answer</summary>The same code works unchanged across environments (your laptop via `az login`, a container via managed identity) with no secret ever stored in config, and tokens expire automatically instead of living forever.</details></li>
+</ol>
+<h2>Next steps</h2>
+<ul>
+<li>This repo&#39;s deep dive, with a real provider-switching function and hands-on exercises: <code>guides/03-azure-openai.md</code> (in the agentic-ai course)</li>
+<li>Azure AI Foundry portal — where you create resources, deployments, and view quotas/monitoring.</li>
+</ul>
+<p class="footer-links">Part of the <strong>Agentic AI on Azure</strong> course repo · also available as plain Markdown (<code>guides/101/</code>) and in the interactive study site (<code>npm run study</code>).</p>
+</div>
+<script>hljs.highlightAll();</script>
+</body>
+</html>

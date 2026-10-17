@@ -1,0 +1,198 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>MCP 101 · Agentic AI on Azure</title>
+<meta name="description" content="A quick primer on the Model Context Protocol: hosts, clients, servers, tools, transports." />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/styles/github.min.css" media="(prefers-color-scheme: light)" id="hl-light" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/styles/github-dark.min.css" media="(prefers-color-scheme: dark)" id="hl-dark" />
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/highlight.min.js"></script>
+<style>
+:root { --bg:#ffffff; --bg-soft:#f6f8fa; --text:#1f2328; --muted:#59636e; --border:#d1d9e0;
+  --accent:#2563eb; --accent-soft:#e8f0fe; --code-bg:#f3f4f6; }
+@media (prefers-color-scheme: dark) {
+  :root { --bg:#0d1117; --bg-soft:#151b23; --text:#e6edf3; --muted:#9198a1; --border:#2f3742;
+    --accent:#4c8dff; --accent-soft:#172440; --code-bg:#1b2129; }
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--bg); color: var(--text); }
+body { font: 17px/1.7 Inter, system-ui, -apple-system, "Segoe UI", sans-serif; }
+code, pre { font-family: "JetBrains Mono", ui-monospace, Menlo, monospace; }
+a { color: var(--accent); }
+.wrap { max-width: 760px; margin: 0 auto; padding: 48px 24px 96px; }
+.eyebrow { display: inline-block; font-size: 13px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase;
+  color: var(--accent); background: var(--accent-soft); padding: 4px 10px; border-radius: 999px; margin-bottom: 16px; }
+h1 { font-size: 2.1em; line-height: 1.2; margin: 0 0 8px; }
+h2 { margin-top: 2.2em; padding-top: .4em; border-top: 1px solid var(--border); }
+h3 { margin-top: 1.6em; }
+blockquote { margin: 0 0 1.5em; padding: 10px 16px; border-left: 3px solid var(--accent); background: var(--accent-soft); border-radius: 0 8px 8px 0; color: var(--muted); }
+blockquote p { margin: 0; }
+p, li { color: var(--text); }
+table { border-collapse: collapse; width: 100%; margin: 1.2em 0; font-size: .95em; }
+th, td { border: 1px solid var(--border); padding: 8px 12px; text-align: left; }
+th { background: var(--bg-soft); }
+code { background: var(--code-bg); padding: .15em .4em; border-radius: 5px; font-size: .9em; }
+pre { background: var(--code-bg); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; overflow-x: auto; }
+pre code { background: none; padding: 0; }
+details { background: var(--bg-soft); border: 1px solid var(--border); border-radius: 8px; padding: 10px 14px; margin: .5em 0 1em; }
+summary { cursor: pointer; font-weight: 600; color: var(--accent); }
+hr { border: none; border-top: 1px solid var(--border); margin: 2.5em 0; }
+.footer-links { margin-top: 3em; padding-top: 1.5em; border-top: 1px solid var(--border); color: var(--muted); font-size: .95em; }
+.badge-row { display:flex; gap:8px; flex-wrap:wrap; margin-bottom: 24px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+<a class="hub-link" href="./" style="display:inline-block;margin:0 0 14px;font-size:14px">← 101 primers</a> · <a class="hub-link" href="../" style="font-size:14px">All readings</a>
+<span class="eyebrow">101 · MCP</span>
+<h1>MCP 101 — Model Context Protocol, from zero</h1>
+<blockquote>
+<p>A quick, standalone primer. For the deep dive tied to this repo&#39;s actual servers (auth, SSRF guards, stateless design, hands-on curl/Inspector exercises), see <code>guides/04-mcp.md</code> (in the agentic-ai course).</p>
+</blockquote>
+<h2>The problem it solves</h2>
+<p>Every time you give an LLM a &quot;tool&quot; (search the web, read a file, send an email), someone has to write the glue code: describe the tool in JSON Schema, run it when the model asks, and feed the result back. Do that for ten tools across three different apps (a chat UI, an IDE assistant, a CLI agent) and you&#39;ve written the same plumbing three times, in three incompatible ways.</p>
+<p><strong>MCP (Model Context Protocol)</strong>, introduced by Anthropic in late 2024, is an open standard that moves tools out of the app and into independent <strong>servers</strong> that <em>any</em> MCP-aware app can connect to. Build a &quot;GitHub&quot; server once; Claude Desktop, VS Code, Cursor and your own app can all use it unchanged. People call it &quot;USB-C for AI tools&quot; — one plug, many devices.</p>
+<h2>Three roles</h2>
+<table>
+<thead>
+<tr>
+<th>Role</th>
+<th>What it is</th>
+<th>Example</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>Host</strong></td>
+<td>The AI application the user talks to. Owns the model and the conversation.</td>
+<td>A chat app, Claude Desktop, an IDE</td>
+</tr>
+<tr>
+<td><strong>Client</strong></td>
+<td>A connection object <em>inside</em> the host, one per server, speaking the protocol.</td>
+<td>The MCP client built into the host&#39;s SDK</td>
+</tr>
+<tr>
+<td><strong>Server</strong></td>
+<td>A standalone program exposing capabilities over MCP.</td>
+<td>A &quot;notes&quot; server, a &quot;GitHub&quot; server, a &quot;database&quot; server</td>
+</tr>
+</tbody></table>
+<pre><code>Host (your app)
+ ├── client ──► MCP server A  (e.g. notes)
+ └── client ──► MCP server B  (e.g. web search)
+</code></pre>
+<p>The model itself never talks to a server directly — it only ever sees &quot;tools&quot; the host hands it. The host is the one that speaks MCP.</p>
+<h2>The wire format: JSON-RPC 2.0</h2>
+<p>Every message is plain JSON-RPC 2.0:</p>
+<pre><code class="language-json">// request
+{ &quot;jsonrpc&quot;: &quot;2.0&quot;, &quot;id&quot;: 1, &quot;method&quot;: &quot;tools/call&quot;,
+  &quot;params&quot;: { &quot;name&quot;: &quot;get_weather&quot;, &quot;arguments&quot;: { &quot;city&quot;: &quot;Chennai&quot; } } }
+
+// response (same id)
+{ &quot;jsonrpc&quot;: &quot;2.0&quot;, &quot;id&quot;: 1,
+  &quot;result&quot;: { &quot;content&quot;: [ { &quot;type&quot;: &quot;text&quot;, &quot;text&quot;: &quot;32°C, humid&quot; } ] } }
+</code></pre>
+<p>A message with no <code>id</code> is a <strong>notification</strong> — fire-and-forget, no reply expected.</p>
+<h2>The three primitives</h2>
+<table>
+<thead>
+<tr>
+<th>Primitive</th>
+<th>Who decides to use it</th>
+<th>Think of it as</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>Tools</strong></td>
+<td>The <strong>model</strong></td>
+<td>An action with a name, a description, and a JSON Schema for its arguments — like a function the model can call</td>
+</tr>
+<tr>
+<td><strong>Resources</strong></td>
+<td>The <strong>app / user</strong></td>
+<td>Read-only data behind a URI (<code>notes://all</code>, <code>file:///README.md</code>) — the host decides what to attach</td>
+</tr>
+<tr>
+<td><strong>Prompts</strong></td>
+<td>The <strong>user</strong></td>
+<td>A reusable prompt template with arguments, often surfaced as a slash command</td>
+</tr>
+</tbody></table>
+<p>In practice, almost everything you&#39;ll build or use today is a <strong>tool</strong>. A tool is defined by three things the model actually sees:</p>
+<pre><code class="language-ts">{
+  name: &quot;delete_note&quot;,
+  description: &quot;Delete a note by id. Only call this when the user explicitly asks to delete.&quot;,
+  inputSchema: { id: &quot;string&quot; } // JSON Schema
+}
+</code></pre>
+<blockquote>
+<p><strong>Key insight:</strong> the name + description + schema <em>is</em> the prompt. The model decides whether and how to call a tool purely from that text. Vague descriptions → the model never calls the tool, or calls the wrong one.</p>
+</blockquote>
+<h2>How a turn actually works</h2>
+<ol>
+<li><strong>Connect &amp; discover.</strong> The client calls <code>initialize</code>, then <code>tools/list</code> to learn what the server offers. The host turns each tool into a normal function-calling entry for the model.</li>
+<li><strong>The model decides.</strong> Given the user&#39;s message and the list of available tools, the model may respond with &quot;call <code>delete_note</code> with <code>{id: &quot;42&quot;}</code>&quot; instead of plain text.</li>
+<li><strong>The host executes.</strong> The host&#39;s MCP client sends <code>tools/call</code> to the right server and gets back a result (or an error).</li>
+<li><strong>The model sees the result</strong> and continues the conversation — possibly calling another tool, possibly answering the user.</li>
+</ol>
+<p>The server never talks to the model; the host always sits in the middle.</p>
+<h2>Transports: how the bytes move</h2>
+<ul>
+<li><strong>stdio</strong> — the host <em>launches</em> the server as a child process and talks over stdin/stdout. Simple, local-only (desktop apps, IDEs). Can&#39;t be a separately deployed service.</li>
+<li><strong>Streamable HTTP</strong> — the server is a normal web service with one endpoint (commonly <code>POST /mcp</code>). The client POSTs JSON-RPC; the server replies with plain JSON or a short Server-Sent-Events stream. This is what you want when a server needs to run as its own deployable, scalable process (e.g. in a container on Azure).</li>
+<li><strong>HTTP+SSE (legacy, 2024)</strong> — the original two-endpoint HTTP transport, now superseded by Streamable HTTP. You&#39;ll still see it referenced in older tutorials.</li>
+</ul>
+<h2>A minimal server (TypeScript)</h2>
+<pre><code class="language-ts">import { McpServer } from &quot;@modelcontextprotocol/sdk/server/mcp.js&quot;;
+import { z } from &quot;zod&quot;;
+
+const server = new McpServer({ name: &quot;demo&quot;, version: &quot;1.0.0&quot; });
+
+server.registerTool(
+  &quot;add&quot;,
+  {
+    title: &quot;Add two numbers&quot;,
+    description: &quot;Add two numbers and return the sum.&quot;,
+    inputSchema: { a: z.number(), b: z.number() },
+  },
+  async ({ a, b }) =&gt; ({
+    content: [{ type: &quot;text&quot;, text: String(a + b) }],
+  }),
+);
+</code></pre>
+<p><code>inputSchema</code> is a zod shape — the SDK turns it into JSON Schema for discovery <em>and</em> validates incoming arguments before your handler runs.</p>
+<h2>Why MCP over &quot;just write a function&quot;</h2>
+<ul>
+<li><strong>Reuse across hosts.</strong> One server, many clients — a chat app, an IDE, a CLI agent all connect the same way.</li>
+<li><strong>Process isolation.</strong> A server can run anywhere (another machine, another language, a sandboxed container) — the host only needs network access.</li>
+<li><strong>A shared discovery format.</strong> <code>tools/list</code> is the same shape regardless of what the server is written in.</li>
+</ul>
+<h2>Security basics (don&#39;t skip this)</h2>
+<ul>
+<li><strong>Tool output is untrusted input.</strong> Anything a tool returns (a web page, a file, a database row) goes straight into the model&#39;s context. Treat it like user input that could contain &quot;ignore previous instructions…&quot;.</li>
+<li><strong>Least privilege.</strong> Don&#39;t expose <code>delete_everything</code> if <code>delete_one_item</code> will do. Use annotations like <code>destructiveHint</code> so hosts can require confirmation.</li>
+<li><strong>Only connect servers you trust.</strong> A malicious server can lie in its tool descriptions (&quot;tool poisoning&quot;) to steer the model.</li>
+</ul>
+<h2>Try it yourself</h2>
+<pre><code class="language-bash">npx @modelcontextprotocol/inspector
+</code></pre>
+<p>The Inspector is a browser UI for connecting to any MCP server (stdio or HTTP), listing its tools/resources/prompts, calling them by hand, and watching the raw JSON-RPC messages fly past. It&#39;s the fastest way to build intuition before writing any code.</p>
+<h2>Check your understanding</h2>
+<ol>
+<li>Who decides when a tool is called — the host, the client, or the model?<details><summary>Answer</summary>The model. Resources are app/user-controlled, prompts are user-controlled, but tool calls are the model's decision based on the conversation.</details></li>
+<li>Why can&#39;t a stdio server be deployed as an independent cloud service the way a Streamable HTTP server can?<details><summary>Answer</summary>stdio requires the host to spawn the server as a local child process and talk over its stdin/stdout — there's no network boundary between them. Streamable HTTP servers are ordinary web services reachable over a URL.</details></li>
+<li>What two things does a tool&#39;s JSON Schema do?<details><summary>Answer</summary>It tells the model what arguments to pass (effectively part of the prompt), and it lets the server validate incoming arguments before running the handler.</details></li>
+</ol>
+<h2>Next steps</h2>
+<ul>
+<li>This repo&#39;s hands-on MCP guide: <code>guides/04-mcp.md</code> (in the agentic-ai course) — build two real servers, speak raw JSON-RPC with curl, add auth, and see the SSRF guard in action.</li>
+<li>Official spec &amp; docs: modelcontextprotocol.io</li>
+</ul>
+<p class="footer-links">Part of the <strong>Agentic AI on Azure</strong> course repo · also available as plain Markdown (<code>guides/101/</code>) and in the interactive study site (<code>npm run study</code>).</p>
+</div>
+<script>hljs.highlightAll();</script>
+</body>
+</html>

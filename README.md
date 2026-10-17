@@ -8,6 +8,7 @@ My learning notes, plans and guides from different projects, published with GitH
 | Module | Folder | Source |
 |---|---|---|
 | TrailForge: agentic AI e-commerce (Agents SDK, Azure, MCP, RAG, Next.js, microservices) | [`trailforge/`](trailforge/) | private `mk-tdev/trailforge` → `research/` |
+| 101 primers: MCP, Azure OpenAI, Azure AI Search | [`agentic-ai-101/`](agentic-ai-101/) | private `mk-tdev/agentic-ai` → `guides/101/` |
 
 Each module folder holds standalone HTML pages (plus the Markdown they were rendered from, readable right here on GitHub).
 
@@ -18,6 +19,13 @@ Each module folder holds standalone HTML pages (plus the Markdown they were rend
 git add -A && git commit -m "Sync TrailForge guides" && git push
 ```
 GitHub Pages redeploys automatically within a minute or two of the push.
+
+## Update the 101 primers
+
+```bash
+./scripts/sync-agentic-ai-101.sh  # copies agentic-ai/guides/101, keeps course-guide references as plain text, adds back links
+git add -A && git commit -m "Sync 101 primers" && git push
+```
 
 ## Add a new module
 

@@ -48,7 +48,7 @@ An LLM doesn't know TrailForge's return policy or product specs. **RAG** fixes t
 | `source` | String | filterable, facetable | ✓ (file name, used for citations) |
 | `title` | String | searchable | ✓ (the doc's `# Title`) |
 | `section` | String | searchable | ✓ (the chunk's `## Heading`) |
-| `chunkIndex` | Int32 | | ✓ |
+| `chunkIndex` | Int32 | filterable | ✓ (`chunkIndex eq 0` = one doc per product → product counts) |
 | `content` | String | searchable | ✓ (the chunk text the model reads) |
 | `contentVector` | Collection(Single), **1536 dims** | vector profile `vprofile` (HNSW, cosine) | ✓ |
 | `slug`, `category`, `brand` | String | filterable (+ facetable) | products only |
@@ -168,7 +168,7 @@ The assistant is a separate app that may not call the store's APIs, so **all pro
 
 | Tool | Index | What it does |
 |---|---|---|
-| `search_catalog` | `tf-products` | Hybrid search + optional filters (`category`, `brand`, `minPriceDollars`, `maxPriceDollars`, `tag`). An **empty query** browses and returns **product counts per category** (a facet), which is how "list all products" works. Several chunks per product → keeps the best chunk per `slug`. Returns name, brand, list price (snapshot), slug and `[source#chunk]`. |
+| `search_catalog` | `tf-products` | Hybrid search + optional filters (`category`, `brand`, `minPriceDollars`, `maxPriceDollars`, `tag`). An **empty query** browses and returns **product counts per category**: a facet over `chunkIndex eq 0` (one chunk per product), because a plain facet would count *chunks* (~5 per product). That's how "list all products" works. Several chunks per product → keeps the best chunk per `slug`. Returns name, brand, list price (snapshot), slug and `[source#chunk]`. |
 | `search_knowledge` | `tf-knowledge` | Hybrid search over policies, guides and FAQs; returns passages with `[source#chunk]` ids to cite. |
 
 How a query runs:

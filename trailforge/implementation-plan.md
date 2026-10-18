@@ -211,8 +211,8 @@ Streaming caveat: output guardrails run after the full answer, so high-stakes an
 | 1 | Scaffold: monorepo, Docker Postgres, shared lib, migrations | `docker compose up` + `npm run db:reset` | ✅ |
 | 2 | Microservices REST APIs + seed (30 users, 100 orders) | Queryable data, smoke-tested | ✅ |
 | 3 | Next.js storefront, admin console, auth, order stages | Working shop + admin | ✅ |
-| 4 | Azure AI foundation + RAG data, ingest & eval set | Search returns good results | 🟡 docs + scripts done · 🔒 Azure |
-| 5 | Assistant core: RAG tools, MCP servers, streaming chat | Pre-login Q&A with citations | 🟡 built; MCP + streaming verified · RAG 🔒 needs Azure AI Search |
+| 4 | Azure AI foundation + RAG data, ingest & eval set | Search returns good results | 🟡 Azure + both indexes live · eval set open |
+| 5 | Assistant core: RAG tools, MCP servers, streaming chat | Pre-login Q&A with citations | ✅ verified live on Azure OpenAI + Azure AI Search |
 | 6 | Login-aware chat & memory | Pre/post-login chat | ✅ verified live (session trimming still open) |
 | 7 | Multi-agent: handoffs, agents as tools, structured output | Specialist agents | ⬜ |
 | 8 | Guardrails & safety | Layered protection + red-team eval | ⬜ (8a can start now) |
@@ -247,8 +247,8 @@ Streaming caveat: output guardrails run after the full answer, so high-stakes an
 ### Phase 4: Azure AI foundation + RAG data 🟡
 - [x] 51 knowledge docs (incl. refund, delivery, cancellation, damaged/lost, policies overview) + 114 generated product docs
 - [x] `rag:prepare` and `rag:ingest` scripts (heading-aware chunking, two indexes, vector + semantic config)
-- [ ] 🔒 Provision Azure OpenAI (`gpt-5-mini`, `text-embedding-3-small`) + Azure AI Search; fill `.env` (guides: [Azure OpenAI Setup](azure-openai-setup.md), [Azure AI Search for RAG](azure-ai-search-rag-setup.md))
-- [ ] 🔒 Run `rag:ingest`; check queries in Search Explorer (keyword vs vector vs hybrid)
+- [x] Provisioned Azure OpenAI (`gpt-5-mini`, `text-embedding-3-small`) + Azure AI Search (Free) in Southeast Asia; `.env` filled (guides: [Azure OpenAI Setup](azure-openai-setup.md), [Azure AI Search for RAG](azure-ai-search-rag-setup.md))
+- [x] Portal walkthrough (wizard index for knowledge) + `rag:ingest`: `tf-products` 574 chunks, `tf-knowledge` 380 chunks
 - [ ] RAG eval set: ~30 questions with expected source docs; report hit@3
 
 ### Phase 5: Assistant core 🟡
@@ -258,7 +258,7 @@ Streaming caveat: output guardrails run after the full answer, so high-stakes an
 - [x] `mcp-account` server (per-user, user JWT per request) + gateway `/mcp/*` publishing (with `x-mcp-key`); admin approvals composed by the gateway
 - [x] MCP tool filter: agent sees only live catalog tools (`get_product`, `check_stock`, `get_reviews`)
 - [x] RAG tools built: `search_catalog` (tf-products, filters + category facets, dedupe per product) and `search_knowledge` (tf-knowledge, citations); hybrid + semantic with fallback
-- [ ] 🔒 Test RAG tools against Azure AI Search (create the service, `rag:ingest`)
+- [x] RAG tools verified live on Azure: list/count products (114, 12 per category), filtered product search, policy answers with citations, combined with account MCP
 - [x] MCP servers `mcp-catalog` (5 tools, resource + template, prompt) and `mcp-promotions` (3 tools, resource, prompt) on a shared `@tf/mcp-kit` host (Streamable HTTP, stateless)
 - [x] Assistant connects with `connectMcpServers` (`dropFailed`, 30 s retry); falls back to local function tools when a server is down; `/api/admin/assistant/status`
 - [x] `npm run smoke:mcp` (19 checks) and `npm run mcp:inspector`

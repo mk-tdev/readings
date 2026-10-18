@@ -1,134 +1,153 @@
-# RAG in the Azure Portal: Hands-on Walkthrough
+# RAG in the Azure Portal: Step-by-Step (Free tier)
 
-> Build a working RAG index **entirely in the Azure portal**, with no code, to see every moving part before using TrailForge's script (`npm run rag:ingest`).
-> You'll upload TrailForge's policy documents to Blob Storage, let Azure AI Search **chunk and embed them for you** ("integrated vectorization"), test keyword, vector and hybrid queries, then compare the result with what the script builds.
-> Prerequisites: an Azure OpenAI resource with a **`text-embedding-3-small`** deployment ([Azure OpenAI Setup](azure-openai-setup.md)). Time: about 45 minutes.
+> Build TrailForge's RAG indexes **entirely in the Azure portal**, with no code, so you see every moving part before using the script (`npm run rag:ingest`).
+> Azure AI Search will **read your files from Blob Storage, chunk them, embed them with your Azure OpenAI model, and index them** ("integrated vectorization"). Then you'll query them in Search explorer.
+> Written for the **Free** search tier and the resource names below. Time: about 30 minutes.
 
-## 1. What you'll build, and how it maps to the script
+## 0. The setup this guide uses
 
-```
- Blob Storage container "tf-knowledge-docs"         Azure AI Search
- ┌──────────────────────────┐   ┌─────────────────────────────────────────────────────────┐
- │ returns-and-refunds.md   │   │ Data source ─► Indexer ─► Skillset ──────────► Index     │
- │ shipping-policy.md       │──►│ (where files   (runs the   1. Split skill      tf-portal- │
- │ … 51 .md files           │   │  live)          pipeline)     (chunks)         knowledge  │
- └──────────────────────────┘   │                             2. Azure OpenAI    + vectorizer│
-                                │                                Embedding skill (for queries)│
-                                └─────────────────────────────────────────────────────────┘
-```
-
-| RAG step | Portal (this guide): **pull model** | TrailForge script: **push model** |
+| Resource | Name | Notes |
 |---|---|---|
-| Load | **Data source** + **indexer** read files from Blob Storage | `ingest.ts` reads `rag/knowledge/*.md` from disk |
-| Chunk | **Split skill** (fixed-size pages with overlap) | `chunkMarkdown()`: split on `##` headings, ~900 chars, 150 overlap |
-| Embed | **Azure OpenAI Embedding skill**, run by Azure AI Search | The script calls the embeddings API itself |
-| Store | Index created by the wizard | Index schema defined in `ingest.ts` |
-| Query embedding | **Vectorizer** on the index: Azure AI Search embeds the question for you | The app embeds the question, then sends the vector |
-| Refresh | Re-run the **indexer** (it picks up new/changed blobs) | Re-run `npm run rag:ingest` |
+| Resource group | `rg-trailforge` | Region **Southeast Asia** for everything |
+| Azure OpenAI | `trailforge-openai-devtest` | Deployments `gpt-5-mini` and **`text-embedding-3-small`** (the one RAG needs) |
+| Storage account | `trailforgestorage` | Containers **`tf-knowledge-docs`** (51 files from `rag/knowledge/`) and **`tf-products-docs`** (114 files from `rag/products/`) |
+| Azure AI Search | `trailforge-search-devtest` | **Free** tier |
 
-Both are valid RAG designs. The portal shows the managed, no-code version; the script gives you full control of chunking and fields (and filterable product metadata).
+Use your own names if they differ; every step says which resource you're on.
 
-## 2. Create the Azure AI Search service (skip if you have one)
+**Free tier limits that matter here:** at most **3 indexes, 3 indexers, 3 data sources and 3 skillsets**, and 50 MB of storage. This guide creates **2 of each** (knowledge + products). TrailForge's script later needs 2 more indexes, so you'll delete one portal index first (see §8). No managed identity, semantic ranker or region limits apply to Free for this walkthrough.
 
-1. Portal → **Create a resource** → **Azure AI Search** → *Create*.
-2. Resource group: the same one as Azure OpenAI (e.g. `rg-trailforge`). Region: preferably the same as Azure OpenAI.
-3. Name: `trailforge-search-<unique>`. Pricing tier: **Free** (1 per subscription; up to 3 indexes and 3 indexers) or **Basic** (semantic ranker).
-4. *Review + create* → *Create*. Wait about 1–2 minutes.
-5. Open it → **Settings → Keys** → *API access control*: **Both** (role-based access and API keys).
-6. *(Basic+)* **Settings → Semantic ranker** → **Free** plan → *Save*.
+## 1. How it works (read once)
 
-## 3. Put the documents in Blob Storage
-
-### 3.1 Create a storage account
-Portal → **Create a resource** → **Storage account**:
-- Same resource group and region; name `trailforgerag<unique>` (lowercase letters and digits only)
-- Performance **Standard**, Redundancy **LRS** (cheapest) → *Review + create*.
-
-### 3.2 Create a container and upload
-1. Storage account → **Data storage → Containers** → **+ Container** → name **`tf-knowledge-docs`**, access level **Private** → *Create*.
-2. Open the container → **Upload** → select all files in `trailforge/rag/knowledge/` (51 `.md` files) → *Upload*.
-
-CLI alternative (same result):
-```bash
-az storage container create --account-name <storage> -n tf-knowledge-docs --auth-mode login
-az storage blob upload-batch --account-name <storage> -d tf-knowledge-docs -s rag/knowledge --pattern "*.md" --auth-mode login
 ```
-(`--auth-mode login` needs the **Storage Blob Data Contributor** role on the storage account for your user.)
+ trailforgestorage                          trailforge-search-devtest (Azure AI Search)
+ ┌────────────────────────┐   ┌───────────────────────────────────────────────────────────────┐
+ │ tf-knowledge-docs/*.md │   │  DATA SOURCE ──► INDEXER ──► SKILLSET ──────────────► INDEX     │
+ │ tf-products-docs/*.md  │──►│  "where the      "runs the    1. Split skill          chunks +  │
+ └────────────────────────┘   │   files are"      pipeline"     (cut into chunks)      vectors  │
+                              │                                2. Azure OpenAI ─────► calls     │
+                              │                                   Embedding skill      trailforge-│
+                              │                                   (1536 numbers/chunk) openai-   │
+                              │   INDEX also has a VECTORIZER: it embeds your QUESTION   devtest │
+                              │   at query time with the same model                              │
+                              └───────────────────────────────────────────────────────────────┘
+```
 
-> Why only the knowledge docs? `rag/products/*.md` files start with front matter (`category:`, `priceCents:`…). The wizard indexes that as plain text, so you can't **filter** by category or price. That's exactly why the app's product index is built by the script. You can still upload products to a second container later to compare.
+The **indexer runs as the search service**, using its **managed identity**. That identity needs permission to **read blobs** and to **call the embedding model**. That's the only setup between "files uploaded" and "wizard works".
 
-## 4. Let Azure AI Search reach Storage and Azure OpenAI
-
-The indexer runs **as the search service**, so the search service needs permission to read blobs and to call the embedding model. Two options:
-
-| Option | Steps | Use when |
+| RAG step | Portal (this guide): pull model | TrailForge script: push model |
 |---|---|---|
-| **API keys** (quickest) | In the wizard, pick the storage connection string and the Azure OpenAI **API key** authentication | First try / learning |
-| **Managed identity** (recommended) | ① Search service → **Settings → Identity** → *System assigned*: **On** → *Save*. ② Storage account → **Access control (IAM)** → *Add role assignment* → **Storage Blob Data Reader** → *Managed identity* → your search service. ③ Azure OpenAI resource → **Access control (IAM)** → **Cognitive Services OpenAI User** → your search service. Wait ~5–10 min. | No secrets stored anywhere |
+| Load | Data source + indexer read Blob Storage | `ingest.ts` reads `rag/*` from disk |
+| Chunk | Split skill (fixed-size pages + overlap) | `##` headings first, ~900 chars, 150 overlap |
+| Embed | Azure OpenAI Embedding skill, called by Search | The script calls the embeddings API |
+| Query embedding | The index's **vectorizer** | The app embeds the question |
+| Refresh | Re-run the indexer | Re-run `npm run rag:ingest` |
 
-## 5. Run the "Import data" wizard
+## 2. Configure the search service (✅ already done on `trailforge-search-devtest`)
 
-> The wizard's name and layout change over time (you may see **Import data (new)**, **Import and vectorize data**, or a tile on the service *Overview*). The steps below are the same ideas in any version.
+Check these once on **trailforge-search-devtest**:
 
-Search service → **Overview** → **Import data (new)** (or *Import and vectorize data*):
-
-1. **Data source:** **Azure Blob Storage**.
-2. **Scenario:** **RAG** (sometimes "Retrieval-augmented generation" or "Text"; not "Multimodal").
-3. **Connect to your data:**
-   - Subscription, storage account `trailforgerag…`, container **`tf-knowledge-docs`**.
-   - Authentication: managed identity (if you did §4) or key.
-   - Leave *deletion tracking* off for now.
-4. **Vectorize your text:**
-   - Kind: **Azure OpenAI** (or *Azure AI Foundry*), your resource, model deployment **`text-embedding-3-small`**.
-   - Authentication: **system-assigned identity** (if you did §4) or **API key**.
-   - Tick the acknowledgement that embedding calls are billed by Azure OpenAI.
-5. **Vectorize images:** skip.
-6. **Advanced settings:**
-   - **Enable semantic ranker** if you're on Basic+.
-   - Schedule: **Once**.
-7. **Review and create:**
-   - Objects name prefix **`tf-portal-knowledge`**. This keeps it separate from the app's `tf-knowledge` index.
-   - *Create*.
-
-The wizard creates four objects, all named after the prefix: a **data source**, a **skillset**, an **index** and an **indexer**. The indexer starts immediately.
-
-## 6. Watch the indexer run
-
-Search service → **Search management → Indexers** → `tf-portal-knowledge-indexer`:
-- **Status** goes *In progress* → *Success*; *Docs succeeded* should be **51**.
-- Open the run to see warnings/errors per document (e.g. a file that failed to embed because of throttling).
-
-Then **Indexes** → `tf-portal-knowledge`:
-- **Document count** is the number of **chunks** (several per file), not 51.
-- Storage size is a few MB.
-
-## 7. Look at what the wizard built (this is the learning part)
-
-Open each object in the portal and read its **JSON** (every object has an *Edit JSON* / *JSON* view):
-
-| Object | What to look for |
+| Setting (left menu) | Should be |
 |---|---|
-| **Data source** `tf-portal-knowledge-datasource` | `type: azureblob`, the container name, the credentials (identity or connection string) |
-| **Skillset** `tf-portal-knowledge-skillset` | `#Microsoft.Skills.Text.SplitSkill`: `textSplitMode: pages`, `maximumPageLength` (about 2000), `pageOverlapLength` (about 500), so fixed-size chunks with overlap. `#Microsoft.Skills.Text.AzureOpenAIEmbeddingSkill`: your deployment and `dimensions` 1536. **Index projections**: one source file → many chunk documents |
-| **Index** `tf-portal-knowledge` | Fields like `chunk_id` (key), `parent_id` (the file), `chunk` (text), `title` (file name), `text_vector` (1536-dim vector). The **vectorizer** under *Vector profiles*. The semantic configuration |
-| **Indexer** `tf-portal-knowledge-indexer` | Links data source → skillset → index; `fieldMappings`, `outputFieldMappings`; schedule; run history |
+| **Settings → Keys** → API access control | **Both** |
+| **Settings → Identity** → System assigned | **On**, with an *Object (principal) ID* shown |
+| **Settings → Semantic ranker** | **Free** plan (on the Free tier this has a monthly query allowance) |
 
-Compare with TrailForge's script index (`scripts/rag/src/ingest.ts`):
+If any isn't set: change it → **Save**.
 
-| | Portal wizard index | Script index `tf-knowledge` |
+## 3. Grant access: the step that makes the wizard work (⬜ to do)
+
+Three role assignments. **A** and **B** are for the search service's identity (the indexer); **C** is for you (Entra ID queries with `curl` and, later, the script).
+
+### A. Search can read your files: on the storage account
+1. Open storage account **trailforgestorage** → left menu **Access control (IAM)**.
+2. **+ Add** → **Add role assignment**.
+3. *Role* tab: search **Storage Blob Data Reader** → select it → **Next**.
+4. *Members* tab: *Assign access to* **Managed identity** → **+ Select members**.
+5. In the panel: *Managed identity* dropdown **Search service** → click **trailforge-search-devtest** → **Select**.
+6. **Review + assign** → **Review + assign**.
+
+### B. Search can call your embedding model: on Azure OpenAI
+1. Open **trailforge-openai-devtest** → **Access control (IAM)** → **+ Add** → **Add role assignment**.
+2. Role **Cognitive Services OpenAI User** → **Next**.
+3. *Assign access to* **Managed identity** → **+ Select members** → *Managed identity* **Search service** → **trailforge-search-devtest** → **Select**.
+4. **Review + assign** → **Review + assign**.
+
+### C. You can query and manage the indexes with Entra ID: on the search service
+1. Open **trailforge-search-devtest** → **Access control (IAM)** → **+ Add** → **Add role assignment**.
+2. Role **Search Index Data Contributor** → **Next** → *Assign access to* **User, group, or service principal** → **+ Select members** → your account → **Select** → **Review + assign**.
+3. Repeat with role **Search Service Contributor** (lets the script create indexes later).
+
+Being **Owner** lets you manage the resource, but not read or write the data inside it with Entra ID. That's why C is needed. The portal itself uses the service keys, so Search explorer works even without C.
+
+**Wait 5–10 minutes** after A and B before running the wizard. New roles take a while to apply, and this is the #1 cause of first-run errors.
+
+**Check A and B:** each resource → **Access control (IAM)** → **Role assignments** tab → you should see `trailforge-search-devtest` (type *Search service*) with the role.
+
+## 4. Import the knowledge docs with the wizard (⬜ to do)
+
+On **trailforge-search-devtest** → **Overview** → top toolbar **Import data (new)**.
+(If you see only *Import data* or *Import and vectorize data*, use that; the pages are the same ideas.)
+
+| # | Wizard page | What to choose |
 |---|---|---|
-| Chunk boundaries | Fixed size (~2000 chars, ~500 overlap); can cut mid-section | `##` headings first, ~900 chars, keeps the heading with each chunk |
-| Fields | `chunk_id`, `parent_id`, `chunk`, `title`, `text_vector` | `id`, `source`, `title`, `section`, `chunkIndex`, `content`, `contentVector` |
-| Section heading per chunk | ✗ | ✓ (`section`; used in citations and as semantic keywords) |
-| Who embeds queries | The index's **vectorizer** | The app (same model) |
-| Product filters (category, brand, price, tags) | ✗ (front matter is just text) | ✓ (`tf-products`) |
+| 1 | **Choose a data source** | **Azure Blob Storage** |
+| 2 | **Choose a scenario** | **RAG** (not Multimodal, not Keyword) |
+| 3 | **Configure your data connection** | Subscription **Azure subscription 1** · Storage account **trailforgestorage** · Blob container **tf-knowledge-docs** · Blob folder: empty · Parsing mode **Default** · Tick **Authenticate using managed identity** → identity type **System-assigned** · Leave *Enable deletion tracking* off → **Next** |
+| 4 | **Vectorize your text** | Kind **Azure OpenAI** · Subscription **Azure subscription 1** · Azure OpenAI service **trailforge-openai-devtest** · Model deployment **text-embedding-3-small** · Authentication type **System assigned identity** · Tick the acknowledgement that Azure OpenAI is billed separately → **Next** |
+| 5 | **Vectorize and enrich your images** | Leave everything off → **Next** |
+| 6 | **Advanced settings** | Tick **Enable semantic ranker** · Schedule **Once** → **Next** |
+| 7 | **Review and create** | Objects name prefix **`tf-portal-knowledge`** → **Create**. If you skip the prefix, the wizard uses a default like `rag-1792331433006` for all four objects; that works too, just use that name below |
 
-## 8. Query it in Search explorer
+You'll see "Import successfully configured". The wizard created four objects and **the indexer starts immediately**:
 
-Index `tf-portal-knowledge` → **Search explorer**:
+| Object | Name |
+|---|---|
+| Data source | `tf-portal-knowledge-datasource` |
+| Skillset | `tf-portal-knowledge-skillset` |
+| Index | `tf-portal-knowledge` |
+| Indexer | `tf-portal-knowledge-indexer` |
 
-1. **Keyword:** type `return window electronics` → *Search*. Results ranked by BM25.
-2. Switch to **JSON view** and try each of these:
+## 5. Import the product docs (⬜ to do)
+
+Run the wizard again with exactly the same choices, except:
+- Page 3 → Blob container **tf-products-docs**
+- Page 7 → prefix **`tf-portal-products`**
+
+The product `.md` files start with front matter (`category:`, `priceCents:`, `tags:`…). The wizard indexes it as **plain text**, so you can *search* for "tents under 400" but you **can't filter** by category or price. That's the main reason the app's product index is built by the script (§8).
+
+## 6. Check the indexers ran
+
+**trailforge-search-devtest** → left menu **Search management → Indexers**:
+
+| Indexer | Expected |
+|---|---|
+| `tf-portal-knowledge-indexer` | Status **Success** · Docs succeeded **51** |
+| `tf-portal-products-indexer` | Status **Success** · Docs succeeded **114** |
+
+Click an indexer → its run history shows per-document warnings or errors (see §11 if anything failed).
+
+Then **Search management → Indexes**: the *Document count* is the number of **chunks**, which is higher than the file count because each file is split into several chunks.
+
+## 7. Explore what was built, then query it
+
+### 7.1 Read the JSON (the learning part)
+Open each object and use its **JSON** / **Edit JSON** view:
+
+| Look at | What to notice |
+|---|---|
+| **Data sources** → `tf-portal-knowledge-datasource` | `type: azureblob`, container `tf-knowledge-docs`, credentials = a **ResourceId** connection (managed identity, no key) |
+| **Skillsets** → `tf-portal-knowledge-skillset` | `#Microsoft.Skills.Text.SplitSkill`: `textSplitMode: pages`, `maximumPageLength` (~2000 chars), `pageOverlapLength` (~500). `#Microsoft.Skills.Text.AzureOpenAIEmbeddingSkill`: your deployment, 1536 dimensions. `indexProjections`: **one file → many chunk documents** |
+| **Indexes** → `tf-portal-knowledge` → *Fields* | `chunk_id` (key), `parent_id` (the file), `chunk` (text), `title` (file name), `text_vector` (1536-dim) |
+| same index → *Vector profiles* | The **vectorizer** pointing at `trailforge-openai-devtest` / `text-embedding-3-small` |
+| same index → *Semantic configurations* | Usually `tf-portal-knowledge-semantic-configuration` |
+| **Indexers** → `tf-portal-knowledge-indexer` | Links data source → skillset → index; schedule; run history |
+
+### 7.2 Query in Search explorer
+**Indexes** → `tf-portal-knowledge` → **Search explorer**.
+
+1. **Keyword:** type `return window electronics` → **Search** (BM25 ranking).
+2. Click **View → JSON view** and paste each query below → **Search**.
 
 ```json
 { "search": "refund amount when I used a promo code", "select": "title, chunk", "top": 3 }
@@ -142,7 +161,7 @@ Index `tf-portal-knowledge` → **Search explorer**:
 }
 ```
 
-**Hybrid** (keyword + vector, merged with RRF):
+**Hybrid** (keyword + vector, merged with Reciprocal Rank Fusion):
 ```json
 {
   "search": "headlamp return after six weeks",
@@ -152,7 +171,7 @@ Index `tf-portal-knowledge` → **Search explorer**:
 }
 ```
 
-**Hybrid + semantic ranker** (Basic+; use the semantic configuration name shown on the index, usually `tf-portal-knowledge-semantic-configuration`):
+**Hybrid + semantic ranker** (check the semantic configuration name in 7.1):
 ```json
 {
   "search": "headlamp return after six weeks",
@@ -166,78 +185,99 @@ Index `tf-portal-knowledge` → **Search explorer**:
 }
 ```
 
-Things to notice:
-- `"FALLTRAIL20"` → keyword wins (an exact code). `"my boots got soaked, how do I dry them?"` → vector wins (a paraphrase of the care guide).
-- With semantic ranking you get `@search.rerankerScore`, **captions** (the best sentences) and sometimes an **answer**.
-- Field names are the wizard's (`chunk`, `text_vector`), not the script's.
+**On the products index** (`tf-portal-products` → Search explorer):
+```json
+{
+  "search": "waterproof tent for two people",
+  "select": "title, chunk",
+  "top": 5,
+  "vectorQueries": [{ "kind": "text", "text": "waterproof tent for two people", "fields": "text_vector", "k": 50 }]
+}
+```
 
-### The same query with curl (Entra ID)
+Things to notice:
+- `FALLTRAIL20` → keyword wins (an exact code). `my boots got soaked, how do I dry them?` → vector wins (a paraphrase of the boot care guide). Hybrid is good at both.
+- The semantic query adds `@search.rerankerScore`, **captions** and sometimes **answers**.
+- Each result is a **chunk**; `title` is the file it came from.
+
+### 7.3 Same query from the terminal (needs role C)
 ```bash
-SEARCH=https://trailforge-search-xyz.search.windows.net
 TOKEN=$(az account get-access-token --resource https://search.azure.com --query accessToken -o tsv)
-curl -s "$SEARCH/indexes/tf-portal-knowledge/docs/search?api-version=2024-07-01" \
+curl -s "https://trailforge-search-devtest.search.windows.net/indexes/tf-portal-knowledge/docs/search?api-version=2024-07-01" \
   -H "Authorization: Bearer $TOKEN" -H "content-type: application/json" \
   -d '{"search":"headlamp return","select":"title,chunk","top":3,
-       "vectorQueries":[{"kind":"text","text":"headlamp return","fields":"text_vector","k":50}]}' | jq '.value[] | {title, score: ."@search.score"}'
+       "vectorQueries":[{"kind":"text","text":"headlamp return","fields":"text_vector","k":50}]}' \
+  | jq '.value[] | {title, score: ."@search.score"}'
 ```
-(Querying with Entra ID needs **Search Index Data Reader** or Contributor on the search service for your user.)
 
-## 9. Change a document and re-index (the pull model in action)
+### 7.4 Change a document and re-index
+1. Edit `rag/knowledge/gift-cards.md` (add a sentence) → upload it to **tf-knowledge-docs** again (overwrite).
+2. **Indexers** → `tf-portal-knowledge-indexer` → **Run** → only **1** document is processed.
+3. Search for your new sentence.
 
-1. Edit `rag/knowledge/gift-cards.md` (e.g. add a sentence), upload it again to the container (overwrite).
-2. Indexers → `tf-portal-knowledge-indexer` → **Run**.
-3. Only the changed blob is processed (*Docs succeeded: 1*). Query for your new sentence.
+Deleted files stay in the index unless *deletion tracking* is enabled on the data source.
 
-Notes:
-- **Deleted files** stay in the index unless you enable *deletion tracking* (blob soft delete or a metadata flag) in the data source.
-- A **schedule** (e.g. hourly) keeps the index in sync automatically.
+## 8. Next: the app's indexes (and the Free-tier limit)
 
-## 10. Connect it to TrailForge? Use the script for the app
+TrailForge's assistant reads the **script's** indexes (`tf-knowledge`, `tf-products`). They use different field names (`content`, `contentVector`, `section`…) and real filter fields for products (`category`, `brand`, `priceCents`, `tags`). The portal indexes are your **learning copies**.
 
-The assistant's RAG tools (`services/assistant/src/rag.ts`) expect the **script's schema** (`content`, `contentVector`, `source`, `section`, product filter fields) and the index names `tf-knowledge` / `tf-products`. The portal index uses different field names and has no product filters. So:
+Free tier = **3 indexes**. You have 2 portal indexes; the script needs 2. So before running the script, **delete the portal products objects**:
+1. **Indexers** → `tf-portal-products-indexer` → **Delete**.
+2. **Indexes** → `tf-portal-products` → **Delete**.
+3. **Skillsets** → `tf-portal-products-skillset` → **Delete**.
+4. **Data sources** → `tf-portal-products-datasource` → **Delete**.
 
-1. Keep `tf-portal-knowledge` as your **learning index** (compare queries side by side).
-2. Build the **app's** indexes with the script, using the same search service:
-   ```bash
-   # .env
-   AZURE_SEARCH_ENDPOINT=https://trailforge-search-xyz.search.windows.net
-   AZURE_OPENAI_ENDPOINT=https://<your-openai>.openai.azure.com
-   AZURE_OPENAI_EMBEDDING_DEPLOYMENT=text-embedding-3-small
-   EMBEDDING_PROVIDER=azure          # match the provider you'll use for queries
-   npm run rag:prepare && npm run rag:ingest
-   ```
-3. Your Free tier fits all three: `tf-portal-knowledge`, `tf-knowledge`, `tf-products` (3-index limit). Delete the portal objects later if you need the room.
-4. Compare the same question in both indexes. Heading-aware chunks (script) usually give cleaner citations than fixed-size chunks (portal).
+Keep `tf-portal-knowledge` to compare with the script's `tf-knowledge`. Then:
+```bash
+# trailforge/.env
+AZURE_OPENAI_ENDPOINT=https://trailforge-openai-devtest.openai.azure.com
+AZURE_OPENAI_EMBEDDING_DEPLOYMENT=text-embedding-3-small
+AZURE_SEARCH_ENDPOINT=https://trailforge-search-devtest.search.windows.net
+EMBEDDING_PROVIDER=azure        # ingest AND queries must use the same embedding provider
+npm run rag:prepare && npm run rag:ingest
+```
+(The script uses your `az login` identity: role **C** on the search service, plus **Cognitive Services OpenAI User** on `trailforge-openai-devtest`, which you already have.)
 
-## 11. Cost and clean-up
+| | Portal `tf-portal-knowledge` | Script `tf-knowledge` |
+|---|---|---|
+| Chunks | Fixed size (~2000 chars, ~500 overlap); can cut mid-section | `##` headings first, ~900 chars; keeps the heading with each chunk |
+| Fields | `chunk_id`, `parent_id`, `chunk`, `title`, `text_vector` | `id`, `source`, `title`, `section`, `chunkIndex`, `content`, `contentVector` |
+| Query embedding | The index's vectorizer | The app |
+| Product filters | ✗ | ✓ (`tf-products`) |
 
-- **Storage:** a few cents per month for 51 small files.
-- **Embeddings:** billed by Azure OpenAI per token. All 51 docs plus test queries cost well under $0.10.
-- **Search:** Free = $0; Basic ≈ $75/month billed hourly.
-- **Clean up the learning objects:** Search service → Indexers / Skillsets / Data sources / Indexes → delete the four `tf-portal-knowledge*` objects. Delete the storage account if you won't re-index.
+## 9. Cost
 
-## 12. Troubleshooting
+- **Search:** Free = $0.
+- **Embeddings:** billed by `trailforge-openai-devtest`; all 165 files plus test queries cost a few cents.
+- **Storage:** cents per month.
 
-| Problem | Fix |
-|---|---|
-| Wizard can't list the storage account or Azure OpenAI resource | Same subscription? You need read access; refresh the wizard |
-| Indexer fails: `403` reading blobs | Managed identity: grant the search service **Storage Blob Data Reader** on the storage account (wait 5–10 min), or use a connection string |
-| Indexer warnings: embedding `401/403` | Grant the search service **Cognitive Services OpenAI User** on the Azure OpenAI resource, or use API-key auth in the wizard |
-| Indexer warnings: `429` | Embedding deployment TPM too low. Raise capacity, then re-run the indexer (only failed docs are retried) |
-| `.md` files skipped or unsupported | Some versions read only certain extensions. Rename to `.txt` for the experiment, or check the data source's parsing mode |
-| Vector query error `no vectorizer` | The index has no vectorizer (wizard step 4 skipped): re-run the wizard, or query with `kind: "vector"` and your own embedding |
-| Semantic query error | Semantic ranker not enabled (Free tier or not turned on) → drop `queryType: semantic` |
-| Free tier "quota exceeded" | Free allows 3 indexes/indexers; delete unused objects |
+## 10. Clean up (when finished)
 
-## 13. Checklist
+Delete the portal objects in this order: **indexers → indexes → skillsets → data sources** (all `tf-portal-*`). Keep the storage containers if you'll re-index later.
 
-- [ ] Search service (Free or Basic), API access control **Both**
-- [ ] Storage account + private container `tf-knowledge-docs` with the 51 knowledge `.md` files
-- [ ] Search service can read Storage and call the embedding deployment (keys or managed identity)
-- [ ] Wizard run with prefix `tf-portal-knowledge`; indexer *Success*, 51 docs
-- [ ] Read the JSON of the data source, skillset, index and indexer
-- [ ] Ran keyword, vector, hybrid (and semantic) queries in Search explorer
-- [ ] Changed one document and re-ran the indexer
-- [ ] Next: `npm run rag:ingest` for the app's `tf-knowledge` / `tf-products` and compare
+## 11. Troubleshooting
+
+| Symptom (indexer run details) | Cause | Fix |
+|---|---|---|
+| `403` / `AuthorizationPermissionMismatch` reading blobs | Role **A** missing or not applied yet | Check *trailforgestorage → IAM → Role assignments*; wait 10 min; **Run** the indexer again |
+| Embedding skill warnings `401`/`403` | Role **B** missing or not applied yet | Check *trailforge-openai-devtest → IAM*; wait; re-run |
+| Embedding skill warnings `429` | Deployment rate limit (TPM) | Re-run (only failed docs retry) or raise the `text-embedding-3-small` capacity |
+| Wizard can't list `trailforgestorage` or the OpenAI resource | Different subscription/region filter | Pick *Azure subscription 1*; refresh the wizard |
+| "Quota exceeded" / can't create an index | Free tier allows 3 of each object | Delete unused `tf-portal-*` objects (§8 order) |
+| `.md` files skipped | Parsing/extension issue | Check the indexer's run details; as an experiment, try parsing mode **Text** or rename a file to `.txt` |
+| Vector query error "no vectorizer" | Wizard step 4 not completed | Re-run the wizard with *Vectorize your text* configured |
+| Semantic query error | Ranker off or the configuration name is wrong | §2 check; copy the name from the index's *Semantic configurations* |
+| `curl` → `401`/`403` | Role **C** missing | §3 C; wait a few minutes; get a new token |
+
+## 12. Checklist
+
+- [ ] §2 Search service: keys **Both**, identity **On**, semantic ranker **Free**
+- [ ] §3 Role **A** (Storage Blob Data Reader → search identity on `trailforgestorage`)
+- [ ] §3 Role **B** (Cognitive Services OpenAI User → search identity on `trailforge-openai-devtest`)
+- [ ] §3 Role **C** (Search Index Data Contributor + Search Service Contributor → you)
+- [ ] §4 Wizard for `tf-knowledge-docs` → `tf-portal-knowledge` (51 docs, Success)
+- [ ] §5 Wizard for `tf-products-docs` → `tf-portal-products` (114 docs, Success)
+- [ ] §7 Read the JSON; ran keyword, vector, hybrid and semantic queries; re-indexed one changed file
+- [ ] §8 Deleted portal products objects; ran the script for `tf-knowledge` + `tf-products`
 
 Related: [Azure AI Search for RAG (script)](azure-ai-search-rag-setup.md) · [Azure OpenAI Setup](azure-openai-setup.md) · [Implementation Plan](implementation-plan.md)

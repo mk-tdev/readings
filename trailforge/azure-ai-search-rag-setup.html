@@ -15,7 +15,7 @@ pre{background:var(--code);border:1px solid var(--line);border-radius:8px;paddin
 table{border-collapse:collapse;width:100%;font-size:14.5px;display:block;overflow-x:auto}th,td{border:1px solid var(--line);padding:7px 10px;text-align:left;vertical-align:top}th{background:var(--soft)}
 blockquote{margin:16px 0;padding:8px 16px;border-left:4px solid var(--accent);background:var(--soft);border-radius:0 8px 8px 0}
 @media (max-width:760px){.wrap{grid-template-columns:1fr}nav{position:static;height:auto;border-right:0;border-bottom:1px solid var(--line)}main{padding:24px 16px 80px}}
-</style></head><body><div class="wrap"><nav><a href="../" class="hub-link">← All readings</a><b>TrailForge research</b><a href="application-context.html" class="">TrailForge: Application Context</a><a href="architecture.html" class="">TrailForge: Architecture & Contracts</a><a href="azure-ai-search-portal-rag.html" class="">RAG in the Azure Portal: Hands-on Walkthrough</a><a href="azure-ai-search-rag-setup.html" class="on">Azure AI Search for RAG: Setup Guide</a><a href="azure-openai-setup.html" class="">Azure OpenAI Setup Guide</a><a href="deployment-plan.html" class="">TrailForge: Deployment Plan</a><a href="implementation-plan.html" class="">TrailForge: Implementation Plan</a><a href="mcp-guide.html" class="">MCP Guide: TrailForge's MCP Servers</a><a href="monorepo-guide.html" class="">Monorepo Guide: How the TrailForge Workspace Works</a></nav><main><h1>Azure AI Search for RAG: Setup Guide</h1>
+</style></head><body><div class="wrap"><nav><a href="../" class="hub-link">← All readings</a><b>TrailForge research</b><a href="application-context.html" class="">TrailForge: Application Context</a><a href="architecture.html" class="">TrailForge: Architecture & Contracts</a><a href="azure-ai-search-portal-rag.html" class="">RAG in the Azure Portal: Step-by-Step (Free tier)</a><a href="azure-ai-search-rag-setup.html" class="on">Azure AI Search for RAG: Setup Guide</a><a href="azure-openai-setup.html" class="">Azure OpenAI Setup Guide</a><a href="deployment-plan.html" class="">TrailForge: Deployment Plan</a><a href="implementation-plan.html" class="">TrailForge: Implementation Plan</a><a href="mcp-guide.html" class="">MCP Guide: TrailForge's MCP Servers</a><a href="monorepo-guide.html" class="">Monorepo Guide: How the TrailForge Workspace Works</a></nav><main><h1>Azure AI Search for RAG: Setup Guide</h1>
 <blockquote>
 <p>What Azure AI Search is, how it powers RAG (retrieval-augmented generation), and how to set it up for TrailForge in the <strong>portal</strong> or with the <strong>CLI</strong>: create the service, grant access, build the two indexes from our Markdown, test queries, and wire it into the assistant.
 Prerequisite: <a href="azure-openai-setup.html">Azure OpenAI Setup</a> is done (we need the <code>text-embedding-3-small</code> deployment).
@@ -128,8 +128,8 @@ Prefer to see every piece in the portal first (no code)? Do <a href="azure-ai-se
 <tr>
 <td><code>chunkIndex</code></td>
 <td>Int32</td>
-<td></td>
-<td>✓</td>
+<td>filterable</td>
+<td>✓ (<code>chunkIndex eq 0</code> = one doc per product → product counts)</td>
 </tr>
 <tr>
 <td><code>content</code></td>
@@ -295,7 +295,7 @@ Q tf-products &#39;{&quot;search&quot;:&quot;waterproof&quot;,&quot;filter&quot;
 <tbody><tr>
 <td><code>search_catalog</code></td>
 <td><code>tf-products</code></td>
-<td>Hybrid search + optional filters (<code>category</code>, <code>brand</code>, <code>minPriceDollars</code>, <code>maxPriceDollars</code>, <code>tag</code>). An <strong>empty query</strong> browses and returns <strong>product counts per category</strong> (a facet), which is how &quot;list all products&quot; works. Several chunks per product → keeps the best chunk per <code>slug</code>. Returns name, brand, list price (snapshot), slug and <code>[source#chunk]</code>.</td>
+<td>Hybrid search + optional filters (<code>category</code>, <code>brand</code>, <code>minPriceDollars</code>, <code>maxPriceDollars</code>, <code>tag</code>). An <strong>empty query</strong> browses and returns <strong>product counts per category</strong>: a facet over <code>chunkIndex eq 0</code> (one chunk per product), because a plain facet would count <em>chunks</em> (~5 per product). That&#39;s how &quot;list all products&quot; works. Several chunks per product → keeps the best chunk per <code>slug</code>. Returns name, brand, list price (snapshot), slug and <code>[source#chunk]</code>.</td>
 </tr>
 <tr>
 <td><code>search_knowledge</code></td>

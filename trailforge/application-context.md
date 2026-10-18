@@ -173,8 +173,8 @@ Full checklist per phase: **`research/implementation-plan.md` §12**. Deployment
 | 1. Scaffold | ✅ |
 | 2. Microservices + seed | ✅ |
 | 3. Next.js storefront, admin console, auth, order stages | ✅ |
-| 4. Azure AI foundation + RAG data/ingest/eval | 🟡 docs + scripts done · 🔒 Azure not provisioned |
-| 5. Assistant core (search tools, MCP, streaming) | 🟡 MCP + live streaming verified with OpenAI; `search_knowledge` needs Azure AI Search |
+| 4. Azure AI foundation + RAG data/ingest/eval | 🟡 Azure OpenAI + AI Search (Free) live, both indexes ingested; eval set open |
+| 5. Assistant core (search tools, MCP, streaming) | ✅ verified live (Azure OpenAI + Azure AI Search + MCP) |
 | 6. Login-aware chat & memory | ✅ verified live |
 | 7. Multi-agent (handoffs, agents as tools, structured output) | ⬜ |
 | 8. Guardrails & safety (8a deterministic can start now) | ⬜ |

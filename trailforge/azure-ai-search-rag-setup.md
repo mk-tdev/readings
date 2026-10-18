@@ -2,6 +2,7 @@
 
 > What Azure AI Search is, how it powers RAG (retrieval-augmented generation), and how to set it up for TrailForge in the **portal** or with the **CLI**: create the service, grant access, build the two indexes from our Markdown, test queries, and wire it into the assistant.
 > Prerequisite: [Azure OpenAI Setup](azure-openai-setup.md) is done (we need the `text-embedding-3-small` deployment).
+> Prefer to see every piece in the portal first (no code)? Do [RAG in the Azure Portal](azure-ai-search-portal-rag.md), then come back here for the app's indexes.
 
 ## 1. RAG in one picture
 

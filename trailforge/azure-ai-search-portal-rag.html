@@ -1,0 +1,364 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RAG in the Azure Portal: Hands-on Walkthrough</title>
+<style>
+:root{--bg:#fbfaf7;--fg:#1f2a24;--muted:#5b6b62;--line:#dfe3dc;--accent:#2f6b4f;--code:#f0f2ec;--soft:#eef3ee}
+@media (prefers-color-scheme:dark){:root{--bg:#121714;--fg:#e4ebe6;--muted:#9aa9a0;--line:#2b352f;--accent:#6fbf93;--code:#1b221e;--soft:#18211c}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.65 system-ui,-apple-system,"Segoe UI",sans-serif}
+.wrap{display:grid;grid-template-columns:240px minmax(0,1fr);min-height:100vh}
+nav{border-right:1px solid var(--line);padding:24px 16px;position:sticky;top:0;height:100vh;overflow:auto;background:var(--soft)}
+nav b{display:block;margin-bottom:12px;color:var(--accent)}nav a{display:block;padding:6px 8px;border-radius:6px;color:var(--fg);text-decoration:none;font-size:14px}
+nav a.on,nav a:hover{background:var(--bg);color:var(--accent)}
+main{max-width:900px;padding:40px 40px 100px}h1{font-size:30px;line-height:1.25}h2{margin-top:40px;padding-bottom:6px;border-bottom:1px solid var(--line)}
+a{color:var(--accent)}code{background:var(--code);padding:2px 5px;border-radius:4px;font-size:.88em}
+pre{background:var(--code);border:1px solid var(--line);border-radius:8px;padding:14px;overflow-x:auto;font-size:13px;line-height:1.5}pre code{padding:0;background:none}
+table{border-collapse:collapse;width:100%;font-size:14.5px;display:block;overflow-x:auto}th,td{border:1px solid var(--line);padding:7px 10px;text-align:left;vertical-align:top}th{background:var(--soft)}
+blockquote{margin:16px 0;padding:8px 16px;border-left:4px solid var(--accent);background:var(--soft);border-radius:0 8px 8px 0}
+@media (max-width:760px){.wrap{grid-template-columns:1fr}nav{position:static;height:auto;border-right:0;border-bottom:1px solid var(--line)}main{padding:24px 16px 80px}}
+</style></head><body><div class="wrap"><nav><a href="../" class="hub-link">← All readings</a><b>TrailForge research</b><a href="application-context.html" class="">TrailForge: Application Context</a><a href="architecture.html" class="">TrailForge: Architecture & Contracts</a><a href="azure-ai-search-portal-rag.html" class="on">RAG in the Azure Portal: Hands-on Walkthrough</a><a href="azure-ai-search-rag-setup.html" class="">Azure AI Search for RAG: Setup Guide</a><a href="azure-openai-setup.html" class="">Azure OpenAI Setup Guide</a><a href="deployment-plan.html" class="">TrailForge: Deployment Plan</a><a href="implementation-plan.html" class="">TrailForge: Implementation Plan</a><a href="mcp-guide.html" class="">MCP Guide: TrailForge's MCP Servers</a><a href="monorepo-guide.html" class="">Monorepo Guide: How the TrailForge Workspace Works</a></nav><main><h1>RAG in the Azure Portal: Hands-on Walkthrough</h1>
+<blockquote>
+<p>Build a working RAG index <strong>entirely in the Azure portal</strong>, with no code, to see every moving part before using TrailForge&#39;s script (<code>npm run rag:ingest</code>).
+You&#39;ll upload TrailForge&#39;s policy documents to Blob Storage, let Azure AI Search <strong>chunk and embed them for you</strong> (&quot;integrated vectorization&quot;), test keyword, vector and hybrid queries, then compare the result with what the script builds.
+Prerequisites: an Azure OpenAI resource with a <strong><code>text-embedding-3-small</code></strong> deployment (<a href="azure-openai-setup.html">Azure OpenAI Setup</a>). Time: about 45 minutes.</p>
+</blockquote>
+<h2>1. What you&#39;ll build, and how it maps to the script</h2>
+<pre><code> Blob Storage container &quot;tf-knowledge-docs&quot;         Azure AI Search
+ ┌──────────────────────────┐   ┌─────────────────────────────────────────────────────────┐
+ │ returns-and-refunds.md   │   │ Data source ─► Indexer ─► Skillset ──────────► Index     │
+ │ shipping-policy.md       │──►│ (where files   (runs the   1. Split skill      tf-portal- │
+ │ … 51 .md files           │   │  live)          pipeline)     (chunks)         knowledge  │
+ └──────────────────────────┘   │                             2. Azure OpenAI    + vectorizer│
+                                │                                Embedding skill (for queries)│
+                                └─────────────────────────────────────────────────────────┘
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>RAG step</th>
+<th>Portal (this guide): <strong>pull model</strong></th>
+<th>TrailForge script: <strong>push model</strong></th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Load</td>
+<td><strong>Data source</strong> + <strong>indexer</strong> read files from Blob Storage</td>
+<td><code>ingest.ts</code> reads <code>rag/knowledge/*.md</code> from disk</td>
+</tr>
+<tr>
+<td>Chunk</td>
+<td><strong>Split skill</strong> (fixed-size pages with overlap)</td>
+<td><code>chunkMarkdown()</code>: split on <code>##</code> headings, ~900 chars, 150 overlap</td>
+</tr>
+<tr>
+<td>Embed</td>
+<td><strong>Azure OpenAI Embedding skill</strong>, run by Azure AI Search</td>
+<td>The script calls the embeddings API itself</td>
+</tr>
+<tr>
+<td>Store</td>
+<td>Index created by the wizard</td>
+<td>Index schema defined in <code>ingest.ts</code></td>
+</tr>
+<tr>
+<td>Query embedding</td>
+<td><strong>Vectorizer</strong> on the index: Azure AI Search embeds the question for you</td>
+<td>The app embeds the question, then sends the vector</td>
+</tr>
+<tr>
+<td>Refresh</td>
+<td>Re-run the <strong>indexer</strong> (it picks up new/changed blobs)</td>
+<td>Re-run <code>npm run rag:ingest</code></td>
+</tr>
+</tbody></table>
+<p>Both are valid RAG designs. The portal shows the managed, no-code version; the script gives you full control of chunking and fields (and filterable product metadata).</p>
+<h2>2. Create the Azure AI Search service (skip if you have one)</h2>
+<ol>
+<li>Portal → <strong>Create a resource</strong> → <strong>Azure AI Search</strong> → <em>Create</em>.</li>
+<li>Resource group: the same one as Azure OpenAI (e.g. <code>rg-trailforge</code>). Region: preferably the same as Azure OpenAI.</li>
+<li>Name: <code>trailforge-search-&lt;unique&gt;</code>. Pricing tier: <strong>Free</strong> (1 per subscription; up to 3 indexes and 3 indexers) or <strong>Basic</strong> (semantic ranker).</li>
+<li><em>Review + create</em> → <em>Create</em>. Wait about 1–2 minutes.</li>
+<li>Open it → <strong>Settings → Keys</strong> → <em>API access control</em>: <strong>Both</strong> (role-based access and API keys).</li>
+<li><em>(Basic+)</em> <strong>Settings → Semantic ranker</strong> → <strong>Free</strong> plan → <em>Save</em>.</li>
+</ol>
+<h2>3. Put the documents in Blob Storage</h2>
+<h3>3.1 Create a storage account</h3>
+<p>Portal → <strong>Create a resource</strong> → <strong>Storage account</strong>:</p>
+<ul>
+<li>Same resource group and region; name <code>trailforgerag&lt;unique&gt;</code> (lowercase letters and digits only)</li>
+<li>Performance <strong>Standard</strong>, Redundancy <strong>LRS</strong> (cheapest) → <em>Review + create</em>.</li>
+</ul>
+<h3>3.2 Create a container and upload</h3>
+<ol>
+<li>Storage account → <strong>Data storage → Containers</strong> → <strong>+ Container</strong> → name <strong><code>tf-knowledge-docs</code></strong>, access level <strong>Private</strong> → <em>Create</em>.</li>
+<li>Open the container → <strong>Upload</strong> → select all files in <code>trailforge/rag/knowledge/</code> (51 <code>.md</code> files) → <em>Upload</em>.</li>
+</ol>
+<p>CLI alternative (same result):</p>
+<pre><code class="language-bash">az storage container create --account-name &lt;storage&gt; -n tf-knowledge-docs --auth-mode login
+az storage blob upload-batch --account-name &lt;storage&gt; -d tf-knowledge-docs -s rag/knowledge --pattern &quot;*.md&quot; --auth-mode login
+</code></pre>
+<p>(<code>--auth-mode login</code> needs the <strong>Storage Blob Data Contributor</strong> role on the storage account for your user.)</p>
+<blockquote>
+<p>Why only the knowledge docs? <code>rag/products/*.md</code> files start with front matter (<code>category:</code>, <code>priceCents:</code>…). The wizard indexes that as plain text, so you can&#39;t <strong>filter</strong> by category or price. That&#39;s exactly why the app&#39;s product index is built by the script. You can still upload products to a second container later to compare.</p>
+</blockquote>
+<h2>4. Let Azure AI Search reach Storage and Azure OpenAI</h2>
+<p>The indexer runs <strong>as the search service</strong>, so the search service needs permission to read blobs and to call the embedding model. Two options:</p>
+<table>
+<thead>
+<tr>
+<th>Option</th>
+<th>Steps</th>
+<th>Use when</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>API keys</strong> (quickest)</td>
+<td>In the wizard, pick the storage connection string and the Azure OpenAI <strong>API key</strong> authentication</td>
+<td>First try / learning</td>
+</tr>
+<tr>
+<td><strong>Managed identity</strong> (recommended)</td>
+<td>① Search service → <strong>Settings → Identity</strong> → <em>System assigned</em>: <strong>On</strong> → <em>Save</em>. ② Storage account → <strong>Access control (IAM)</strong> → <em>Add role assignment</em> → <strong>Storage Blob Data Reader</strong> → <em>Managed identity</em> → your search service. ③ Azure OpenAI resource → <strong>Access control (IAM)</strong> → <strong>Cognitive Services OpenAI User</strong> → your search service. Wait ~5–10 min.</td>
+<td>No secrets stored anywhere</td>
+</tr>
+</tbody></table>
+<h2>5. Run the &quot;Import data&quot; wizard</h2>
+<blockquote>
+<p>The wizard&#39;s name and layout change over time (you may see <strong>Import data (new)</strong>, <strong>Import and vectorize data</strong>, or a tile on the service <em>Overview</em>). The steps below are the same ideas in any version.</p>
+</blockquote>
+<p>Search service → <strong>Overview</strong> → <strong>Import data (new)</strong> (or <em>Import and vectorize data</em>):</p>
+<ol>
+<li><strong>Data source:</strong> <strong>Azure Blob Storage</strong>.</li>
+<li><strong>Scenario:</strong> <strong>RAG</strong> (sometimes &quot;Retrieval-augmented generation&quot; or &quot;Text&quot;; not &quot;Multimodal&quot;).</li>
+<li><strong>Connect to your data:</strong><ul>
+<li>Subscription, storage account <code>trailforgerag…</code>, container <strong><code>tf-knowledge-docs</code></strong>.</li>
+<li>Authentication: managed identity (if you did §4) or key.</li>
+<li>Leave <em>deletion tracking</em> off for now.</li>
+</ul>
+</li>
+<li><strong>Vectorize your text:</strong><ul>
+<li>Kind: <strong>Azure OpenAI</strong> (or <em>Azure AI Foundry</em>), your resource, model deployment <strong><code>text-embedding-3-small</code></strong>.</li>
+<li>Authentication: <strong>system-assigned identity</strong> (if you did §4) or <strong>API key</strong>.</li>
+<li>Tick the acknowledgement that embedding calls are billed by Azure OpenAI.</li>
+</ul>
+</li>
+<li><strong>Vectorize images:</strong> skip.</li>
+<li><strong>Advanced settings:</strong><ul>
+<li><strong>Enable semantic ranker</strong> if you&#39;re on Basic+.</li>
+<li>Schedule: <strong>Once</strong>.</li>
+</ul>
+</li>
+<li><strong>Review and create:</strong><ul>
+<li>Objects name prefix <strong><code>tf-portal-knowledge</code></strong>. This keeps it separate from the app&#39;s <code>tf-knowledge</code> index.</li>
+<li><em>Create</em>.</li>
+</ul>
+</li>
+</ol>
+<p>The wizard creates four objects, all named after the prefix: a <strong>data source</strong>, a <strong>skillset</strong>, an <strong>index</strong> and an <strong>indexer</strong>. The indexer starts immediately.</p>
+<h2>6. Watch the indexer run</h2>
+<p>Search service → <strong>Search management → Indexers</strong> → <code>tf-portal-knowledge-indexer</code>:</p>
+<ul>
+<li><strong>Status</strong> goes <em>In progress</em> → <em>Success</em>; <em>Docs succeeded</em> should be <strong>51</strong>.</li>
+<li>Open the run to see warnings/errors per document (e.g. a file that failed to embed because of throttling).</li>
+</ul>
+<p>Then <strong>Indexes</strong> → <code>tf-portal-knowledge</code>:</p>
+<ul>
+<li><strong>Document count</strong> is the number of <strong>chunks</strong> (several per file), not 51.</li>
+<li>Storage size is a few MB.</li>
+</ul>
+<h2>7. Look at what the wizard built (this is the learning part)</h2>
+<p>Open each object in the portal and read its <strong>JSON</strong> (every object has an <em>Edit JSON</em> / <em>JSON</em> view):</p>
+<table>
+<thead>
+<tr>
+<th>Object</th>
+<th>What to look for</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>Data source</strong> <code>tf-portal-knowledge-datasource</code></td>
+<td><code>type: azureblob</code>, the container name, the credentials (identity or connection string)</td>
+</tr>
+<tr>
+<td><strong>Skillset</strong> <code>tf-portal-knowledge-skillset</code></td>
+<td><code>#Microsoft.Skills.Text.SplitSkill</code>: <code>textSplitMode: pages</code>, <code>maximumPageLength</code> (about 2000), <code>pageOverlapLength</code> (about 500), so fixed-size chunks with overlap. <code>#Microsoft.Skills.Text.AzureOpenAIEmbeddingSkill</code>: your deployment and <code>dimensions</code> 1536. <strong>Index projections</strong>: one source file → many chunk documents</td>
+</tr>
+<tr>
+<td><strong>Index</strong> <code>tf-portal-knowledge</code></td>
+<td>Fields like <code>chunk_id</code> (key), <code>parent_id</code> (the file), <code>chunk</code> (text), <code>title</code> (file name), <code>text_vector</code> (1536-dim vector). The <strong>vectorizer</strong> under <em>Vector profiles</em>. The semantic configuration</td>
+</tr>
+<tr>
+<td><strong>Indexer</strong> <code>tf-portal-knowledge-indexer</code></td>
+<td>Links data source → skillset → index; <code>fieldMappings</code>, <code>outputFieldMappings</code>; schedule; run history</td>
+</tr>
+</tbody></table>
+<p>Compare with TrailForge&#39;s script index (<code>scripts/rag/src/ingest.ts</code>):</p>
+<table>
+<thead>
+<tr>
+<th></th>
+<th>Portal wizard index</th>
+<th>Script index <code>tf-knowledge</code></th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Chunk boundaries</td>
+<td>Fixed size (~2000 chars, ~500 overlap); can cut mid-section</td>
+<td><code>##</code> headings first, ~900 chars, keeps the heading with each chunk</td>
+</tr>
+<tr>
+<td>Fields</td>
+<td><code>chunk_id</code>, <code>parent_id</code>, <code>chunk</code>, <code>title</code>, <code>text_vector</code></td>
+<td><code>id</code>, <code>source</code>, <code>title</code>, <code>section</code>, <code>chunkIndex</code>, <code>content</code>, <code>contentVector</code></td>
+</tr>
+<tr>
+<td>Section heading per chunk</td>
+<td>✗</td>
+<td>✓ (<code>section</code>; used in citations and as semantic keywords)</td>
+</tr>
+<tr>
+<td>Who embeds queries</td>
+<td>The index&#39;s <strong>vectorizer</strong></td>
+<td>The app (same model)</td>
+</tr>
+<tr>
+<td>Product filters (category, brand, price, tags)</td>
+<td>✗ (front matter is just text)</td>
+<td>✓ (<code>tf-products</code>)</td>
+</tr>
+</tbody></table>
+<h2>8. Query it in Search explorer</h2>
+<p>Index <code>tf-portal-knowledge</code> → <strong>Search explorer</strong>:</p>
+<ol>
+<li><strong>Keyword:</strong> type <code>return window electronics</code> → <em>Search</em>. Results ranked by BM25.</li>
+<li>Switch to <strong>JSON view</strong> and try each of these:</li>
+</ol>
+<pre><code class="language-json">{ &quot;search&quot;: &quot;refund amount when I used a promo code&quot;, &quot;select&quot;: &quot;title, chunk&quot;, &quot;top&quot;: 3 }
+</code></pre>
+<p><strong>Vector only</strong> (the vectorizer embeds your text; no keyword match needed):</p>
+<pre><code class="language-json">{
+  &quot;select&quot;: &quot;title, chunk&quot;,
+  &quot;vectorQueries&quot;: [{ &quot;kind&quot;: &quot;text&quot;, &quot;text&quot;: &quot;can I send back my headlamp after six weeks?&quot;, &quot;fields&quot;: &quot;text_vector&quot;, &quot;k&quot;: 3 }]
+}
+</code></pre>
+<p><strong>Hybrid</strong> (keyword + vector, merged with RRF):</p>
+<pre><code class="language-json">{
+  &quot;search&quot;: &quot;headlamp return after six weeks&quot;,
+  &quot;select&quot;: &quot;title, chunk&quot;,
+  &quot;top&quot;: 3,
+  &quot;vectorQueries&quot;: [{ &quot;kind&quot;: &quot;text&quot;, &quot;text&quot;: &quot;headlamp return after six weeks&quot;, &quot;fields&quot;: &quot;text_vector&quot;, &quot;k&quot;: 50 }]
+}
+</code></pre>
+<p><strong>Hybrid + semantic ranker</strong> (Basic+; use the semantic configuration name shown on the index, usually <code>tf-portal-knowledge-semantic-configuration</code>):</p>
+<pre><code class="language-json">{
+  &quot;search&quot;: &quot;headlamp return after six weeks&quot;,
+  &quot;select&quot;: &quot;title, chunk&quot;,
+  &quot;top&quot;: 3,
+  &quot;queryType&quot;: &quot;semantic&quot;,
+  &quot;semanticConfiguration&quot;: &quot;tf-portal-knowledge-semantic-configuration&quot;,
+  &quot;captions&quot;: &quot;extractive&quot;,
+  &quot;answers&quot;: &quot;extractive&quot;,
+  &quot;vectorQueries&quot;: [{ &quot;kind&quot;: &quot;text&quot;, &quot;text&quot;: &quot;headlamp return after six weeks&quot;, &quot;fields&quot;: &quot;text_vector&quot;, &quot;k&quot;: 50 }]
+}
+</code></pre>
+<p>Things to notice:</p>
+<ul>
+<li><code>&quot;FALLTRAIL20&quot;</code> → keyword wins (an exact code). <code>&quot;my boots got soaked, how do I dry them?&quot;</code> → vector wins (a paraphrase of the care guide).</li>
+<li>With semantic ranking you get <code>@search.rerankerScore</code>, <strong>captions</strong> (the best sentences) and sometimes an <strong>answer</strong>.</li>
+<li>Field names are the wizard&#39;s (<code>chunk</code>, <code>text_vector</code>), not the script&#39;s.</li>
+</ul>
+<h3>The same query with curl (Entra ID)</h3>
+<pre><code class="language-bash">SEARCH=https://trailforge-search-xyz.search.windows.net
+TOKEN=$(az account get-access-token --resource https://search.azure.com --query accessToken -o tsv)
+curl -s &quot;$SEARCH/indexes/tf-portal-knowledge/docs/search?api-version=2024-07-01&quot; \
+  -H &quot;Authorization: Bearer $TOKEN&quot; -H &quot;content-type: application/json&quot; \
+  -d &#39;{&quot;search&quot;:&quot;headlamp return&quot;,&quot;select&quot;:&quot;title,chunk&quot;,&quot;top&quot;:3,
+       &quot;vectorQueries&quot;:[{&quot;kind&quot;:&quot;text&quot;,&quot;text&quot;:&quot;headlamp return&quot;,&quot;fields&quot;:&quot;text_vector&quot;,&quot;k&quot;:50}]}&#39; | jq &#39;.value[] | {title, score: .&quot;@search.score&quot;}&#39;
+</code></pre>
+<p>(Querying with Entra ID needs <strong>Search Index Data Reader</strong> or Contributor on the search service for your user.)</p>
+<h2>9. Change a document and re-index (the pull model in action)</h2>
+<ol>
+<li>Edit <code>rag/knowledge/gift-cards.md</code> (e.g. add a sentence), upload it again to the container (overwrite).</li>
+<li>Indexers → <code>tf-portal-knowledge-indexer</code> → <strong>Run</strong>.</li>
+<li>Only the changed blob is processed (<em>Docs succeeded: 1</em>). Query for your new sentence.</li>
+</ol>
+<p>Notes:</p>
+<ul>
+<li><strong>Deleted files</strong> stay in the index unless you enable <em>deletion tracking</em> (blob soft delete or a metadata flag) in the data source.</li>
+<li>A <strong>schedule</strong> (e.g. hourly) keeps the index in sync automatically.</li>
+</ul>
+<h2>10. Connect it to TrailForge? Use the script for the app</h2>
+<p>The assistant&#39;s RAG tools (<code>services/assistant/src/rag.ts</code>) expect the <strong>script&#39;s schema</strong> (<code>content</code>, <code>contentVector</code>, <code>source</code>, <code>section</code>, product filter fields) and the index names <code>tf-knowledge</code> / <code>tf-products</code>. The portal index uses different field names and has no product filters. So:</p>
+<ol>
+<li>Keep <code>tf-portal-knowledge</code> as your <strong>learning index</strong> (compare queries side by side).</li>
+<li>Build the <strong>app&#39;s</strong> indexes with the script, using the same search service:<pre><code class="language-bash"># .env
+AZURE_SEARCH_ENDPOINT=https://trailforge-search-xyz.search.windows.net
+AZURE_OPENAI_ENDPOINT=https://&lt;your-openai&gt;.openai.azure.com
+AZURE_OPENAI_EMBEDDING_DEPLOYMENT=text-embedding-3-small
+EMBEDDING_PROVIDER=azure          # match the provider you&#39;ll use for queries
+npm run rag:prepare &amp;&amp; npm run rag:ingest
+</code></pre>
+</li>
+<li>Your Free tier fits all three: <code>tf-portal-knowledge</code>, <code>tf-knowledge</code>, <code>tf-products</code> (3-index limit). Delete the portal objects later if you need the room.</li>
+<li>Compare the same question in both indexes. Heading-aware chunks (script) usually give cleaner citations than fixed-size chunks (portal).</li>
+</ol>
+<h2>11. Cost and clean-up</h2>
+<ul>
+<li><strong>Storage:</strong> a few cents per month for 51 small files.</li>
+<li><strong>Embeddings:</strong> billed by Azure OpenAI per token. All 51 docs plus test queries cost well under $0.10.</li>
+<li><strong>Search:</strong> Free = $0; Basic ≈ $75/month billed hourly.</li>
+<li><strong>Clean up the learning objects:</strong> Search service → Indexers / Skillsets / Data sources / Indexes → delete the four <code>tf-portal-knowledge*</code> objects. Delete the storage account if you won&#39;t re-index.</li>
+</ul>
+<h2>12. Troubleshooting</h2>
+<table>
+<thead>
+<tr>
+<th>Problem</th>
+<th>Fix</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Wizard can&#39;t list the storage account or Azure OpenAI resource</td>
+<td>Same subscription? You need read access; refresh the wizard</td>
+</tr>
+<tr>
+<td>Indexer fails: <code>403</code> reading blobs</td>
+<td>Managed identity: grant the search service <strong>Storage Blob Data Reader</strong> on the storage account (wait 5–10 min), or use a connection string</td>
+</tr>
+<tr>
+<td>Indexer warnings: embedding <code>401/403</code></td>
+<td>Grant the search service <strong>Cognitive Services OpenAI User</strong> on the Azure OpenAI resource, or use API-key auth in the wizard</td>
+</tr>
+<tr>
+<td>Indexer warnings: <code>429</code></td>
+<td>Embedding deployment TPM too low. Raise capacity, then re-run the indexer (only failed docs are retried)</td>
+</tr>
+<tr>
+<td><code>.md</code> files skipped or unsupported</td>
+<td>Some versions read only certain extensions. Rename to <code>.txt</code> for the experiment, or check the data source&#39;s parsing mode</td>
+</tr>
+<tr>
+<td>Vector query error <code>no vectorizer</code></td>
+<td>The index has no vectorizer (wizard step 4 skipped): re-run the wizard, or query with <code>kind: &quot;vector&quot;</code> and your own embedding</td>
+</tr>
+<tr>
+<td>Semantic query error</td>
+<td>Semantic ranker not enabled (Free tier or not turned on) → drop <code>queryType: semantic</code></td>
+</tr>
+<tr>
+<td>Free tier &quot;quota exceeded&quot;</td>
+<td>Free allows 3 indexes/indexers; delete unused objects</td>
+</tr>
+</tbody></table>
+<h2>13. Checklist</h2>
+<ul>
+<li><input disabled="" type="checkbox"> Search service (Free or Basic), API access control <strong>Both</strong></li>
+<li><input disabled="" type="checkbox"> Storage account + private container <code>tf-knowledge-docs</code> with the 51 knowledge <code>.md</code> files</li>
+<li><input disabled="" type="checkbox"> Search service can read Storage and call the embedding deployment (keys or managed identity)</li>
+<li><input disabled="" type="checkbox"> Wizard run with prefix <code>tf-portal-knowledge</code>; indexer <em>Success</em>, 51 docs</li>
+<li><input disabled="" type="checkbox"> Read the JSON of the data source, skillset, index and indexer</li>
+<li><input disabled="" type="checkbox"> Ran keyword, vector, hybrid (and semantic) queries in Search explorer</li>
+<li><input disabled="" type="checkbox"> Changed one document and re-ran the indexer</li>
+<li><input disabled="" type="checkbox"> Next: <code>npm run rag:ingest</code> for the app&#39;s <code>tf-knowledge</code> / <code>tf-products</code> and compare</li>
+</ul>
+<p>Related: <a href="azure-ai-search-rag-setup.html">Azure AI Search for RAG (script)</a> · <a href="azure-openai-setup.html">Azure OpenAI Setup</a> · <a href="implementation-plan.html">Implementation Plan</a></p>
+</main></div></body></html>

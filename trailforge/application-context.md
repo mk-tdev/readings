@@ -124,7 +124,7 @@ Key rules:
   - climbing gear is non-returnable;
   - refunds ≤ $100 are approved automatically.
 
-Full contracts (ports, every endpoint, SSE events, data shapes) are in **`research/architecture.md`**. How the workspace runs: **`research/monorepo-guide.md`**. MCP servers: **`research/mcp-guide.md`**. Azure setup: **`research/azure-openai-setup.md`**, **`research/azure-ai-search-rag-setup.md`**. The plan and phases are in **`research/implementation-plan.md`**.
+Full contracts (ports, every endpoint, SSE events, data shapes) are in **`research/architecture.md`**. How the workspace runs: **`research/monorepo-guide.md`**. MCP servers: **`research/mcp-guide.md`**. Azure setup: **`research/azure-openai-setup.md`**, **`research/azure-ai-search-rag-setup.md`**. Code tour: **`research/backend-walkthrough.md`**. The plan and phases are in **`research/implementation-plan.md`**.
 
 ## 7. Repository map
 

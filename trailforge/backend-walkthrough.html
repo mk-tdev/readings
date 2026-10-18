@@ -1,0 +1,585 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Backend Walkthrough: How the Node.js Services and the AI Agent Work</title>
+<style>
+:root{--bg:#fbfaf7;--fg:#1f2a24;--muted:#5b6b62;--line:#dfe3dc;--accent:#2f6b4f;--code:#f0f2ec;--soft:#eef3ee}
+@media (prefers-color-scheme:dark){:root{--bg:#121714;--fg:#e4ebe6;--muted:#9aa9a0;--line:#2b352f;--accent:#6fbf93;--code:#1b221e;--soft:#18211c}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.65 system-ui,-apple-system,"Segoe UI",sans-serif}
+.wrap{display:grid;grid-template-columns:240px minmax(0,1fr);min-height:100vh}
+nav{border-right:1px solid var(--line);padding:24px 16px;position:sticky;top:0;height:100vh;overflow:auto;background:var(--soft)}
+nav b{display:block;margin-bottom:12px;color:var(--accent)}nav a{display:block;padding:6px 8px;border-radius:6px;color:var(--fg);text-decoration:none;font-size:14px}
+nav a.on,nav a:hover{background:var(--bg);color:var(--accent)}
+main{max-width:900px;padding:40px 40px 100px}h1{font-size:30px;line-height:1.25}h2{margin-top:40px;padding-bottom:6px;border-bottom:1px solid var(--line)}
+a{color:var(--accent)}code{background:var(--code);padding:2px 5px;border-radius:4px;font-size:.88em}
+pre{background:var(--code);border:1px solid var(--line);border-radius:8px;padding:14px;overflow-x:auto;font-size:13px;line-height:1.5}pre code{padding:0;background:none}
+table{border-collapse:collapse;width:100%;font-size:14.5px;display:block;overflow-x:auto}th,td{border:1px solid var(--line);padding:7px 10px;text-align:left;vertical-align:top}th{background:var(--soft)}
+blockquote{margin:16px 0;padding:8px 16px;border-left:4px solid var(--accent);background:var(--soft);border-radius:0 8px 8px 0}
+@media (max-width:760px){.wrap{grid-template-columns:1fr}nav{position:static;height:auto;border-right:0;border-bottom:1px solid var(--line)}main{padding:24px 16px 80px}}
+</style></head><body><div class="wrap"><nav><a href="../" class="hub-link">← All readings</a><b>TrailForge research</b><a href="application-context.html" class="">TrailForge: Application Context</a><a href="architecture.html" class="">TrailForge: Architecture & Contracts</a><a href="azure-ai-search-portal-rag.html" class="">RAG in the Azure Portal: Step-by-Step (Free tier)</a><a href="azure-ai-search-rag-setup.html" class="">Azure AI Search for RAG: Setup Guide</a><a href="azure-openai-setup.html" class="">Azure OpenAI Setup Guide</a><a href="backend-walkthrough.html" class="on">Backend Walkthrough: How the Node.js Services and the AI Agent Work</a><a href="deployment-plan.html" class="">TrailForge: Deployment Plan</a><a href="implementation-plan.html" class="">TrailForge: Implementation Plan</a><a href="mcp-guide.html" class="">MCP Guide: TrailForge's MCP Servers</a><a href="monorepo-guide.html" class="">Monorepo Guide: How the TrailForge Workspace Works</a></nav><main><h1>Backend Walkthrough: How the Node.js Services and the AI Agent Work</h1>
+<blockquote>
+<p>A guided tour of TrailForge&#39;s <strong>backend and AI code</strong> (no front-end). How a request travels through the gateway, how services call each other, how the assistant runs an agent, and how it reaches <strong>Azure OpenAI</strong>, <strong>Azure AI Search</strong> (RAG) and the store&#39;s <strong>MCP servers</strong>.
+Every section points to real files. Read it next to the code. Paths are relative to the repo root.</p>
+</blockquote>
+<h2>1. The 30-second map</h2>
+<pre><code>                        ┌──────────────────────────── E-COMMERCE SIDE ─────────────────────────────┐
+ browser / Next.js BFF  │                                                                          │
+ ──────────────────────►│  gateway :3000  (services/gateway)                                       │
+   /api/products …      │     │  forward() ──HTTP──► customer :4001  catalog :4002  inventory :4003 │
+   /api/orders …        │     │                      order :4004  payment :4005  promotion :4006   │
+   /api/chat  ───┐      │     │                      marketing :4007        (each has its own DB)  │
+                 │      │     │                                                                    │
+                 │      │     └─ /mcp/catalog|promotions|account ──► mcp-catalog :4201             │
+                 │      │                                            mcp-promotions :4202          │
+                 │      │                                            mcp-account :4203 ──► services │
+                 │      └──────────────────────────────────────────────────────────────────────────┘
+                 │                     ▲ MCP over HTTP (via the gateway only)
+                 ▼                     │
+        ┌──────────── AI SIDE (a separate app) ─────────────┐
+        │ assistant :4100  (services/assistant)               │
+        │   OpenAI Agents SDK agent                           │──► Azure OpenAI  (chat model + embeddings)
+        │   RAG tools ────────────────────────────────────────│──► Azure AI Search (tf-products, tf-knowledge)
+        │   own DB: conversations (chat memory)               │
+        └─────────────────────────────────────────────────────┘
+</code></pre>
+<p>There are two kinds of traffic:</p>
+<ol>
+<li><strong>Store traffic.</strong> The browser asks for products or orders → <strong>gateway</strong> → the right <strong>service</strong> → its <strong>Postgres database</strong>.</li>
+<li><strong>AI traffic.</strong> The browser sends a chat message → gateway → <strong>assistant</strong>. The assistant&#39;s agent then reaches out to:<ul>
+<li><strong>Azure OpenAI</strong>, to think and to embed text;</li>
+<li><strong>Azure AI Search</strong>, for RAG answers;</li>
+<li>the store&#39;s <strong>MCP servers</strong>, <em>through the gateway</em>, for live stock, promotions and the user&#39;s own orders.</li>
+</ul>
+</li>
+</ol>
+<p>Every box is a separate Node.js process (<code>npm run dev</code> starts them all). They talk <strong>only over HTTP</strong>.</p>
+<h2>2. The building blocks every service shares (<code>packages/shared/src</code>)</h2>
+<p>All Express services are built from the same small toolkit, so learn it once.</p>
+<h3>2.1 <code>createService()</code>: the Express app factory (<code>http.ts</code>)</h3>
+<pre><code class="language-ts">export function createService(name) {
+  const app = express();
+  app.use(express.json({ limit: &#39;1mb&#39; }));   // ① parse JSON bodies into req.body
+  app.use(/* log every request */);           // ② &quot;GET /me/orders → 200 12ms&quot;
+  app.use(authenticate);                      // ③ read the JWT / internal token → req.auth
+  app.get(&#39;/healthz&#39;, …);                     // ④ health check for Docker/Azure
+  function start() {
+    app.use(/* 404 for unknown routes */);    // ⑥ after all routes
+    app.use(errorHandler(name));              // ⑦ turn thrown errors into JSON
+    return app.listen(port);
+  }
+  return { app, start };
+}
+</code></pre>
+<p>A service file is therefore always: <code>const { app, start } = createService(&#39;order&#39;)</code> → register routes (⑤) → <code>start()</code>.</p>
+<p><strong>Request lifecycle inside one service:</strong></p>
+<pre><code>HTTP request → express.json → logger → authenticate (sets req.auth) → your route handler
+             → (throws HttpError?) → errorHandler → {&quot;error&quot;:{&quot;code&quot;,&quot;message&quot;}} with the right status
+</code></pre>
+<p>Express 5 forwards errors thrown in <code>async</code> handlers to the error handler automatically. That&#39;s why route code just writes <code>throw notFound(&#39;Order&#39;)</code> and never has to wrap anything in <code>try/catch</code>.</p>
+<h3>2.2 Errors (<code>errors.ts</code>)</h3>
+<pre><code class="language-ts">export class HttpError extends Error { constructor(public status, public code, message, public details?) … }
+export const notFound = (what = &#39;Resource&#39;) =&gt; new HttpError(404, &#39;NOT_FOUND&#39;, `${what} not found`);
+</code></pre>
+<p>The <code>errorHandler</code> sends <code>{ error: { code, message, details } }</code> with that status. Validation errors from <strong>zod</strong> (<code>parse(schema, req.body)</code>) become <code>400 BAD_REQUEST</code> automatically.</p>
+<h3>2.3 Auth (<code>auth.ts</code>): two ways to call a service</h3>
+<table>
+<thead>
+<tr>
+<th>Header</th>
+<th>Who sends it</th>
+<th>Means</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>Authorization: Bearer &lt;JWT&gt;</code></td>
+<td>Browser (via gateway), MCP servers</td>
+<td>&quot;I&#39;m <strong>this customer</strong>&quot;. The JWT is signed by the customer service at login (<code>signToken</code>, HS256, 7 days)</td>
+</tr>
+<tr>
+<td><code>x-internal-token: &lt;INTERNAL_TOKEN&gt;</code></td>
+<td>One store service calling another</td>
+<td>&quot;I&#39;m a <strong>trusted internal service</strong>&quot; (may act for any customer)</td>
+</tr>
+</tbody></table>
+<p><code>authenticate</code> <strong>never rejects</strong>; it only fills <code>req.auth</code>:</p>
+<pre><code class="language-ts">req.auth = { customerId: null, role: null, internal: false };
+if (req.headers[&#39;x-internal-token&#39;] === config.INTERNAL_TOKEN) req.auth.internal = true;
+if (authorization starts with &#39;Bearer &#39;) req.auth = { ...(await verifyToken(jwt)), internal: … };
+</code></pre>
+<p><strong>Guards</strong> decide per route:</p>
+<ul>
+<li><code>requireCustomer</code> → 401 unless logged in;</li>
+<li><code>requireAdmin</code> → admins (or internal calls) only;</li>
+<li><code>requireInternal</code> → internal service calls (or admins) only.</li>
+</ul>
+<p><code>actingCustomerId(req)</code> returns <em>whose</em> data to use. A customer always gets <strong>their own id</strong>, taken from the verified JWT; only an internal caller may pass <code>?customerId=</code>. That one function is why a customer can never read someone else&#39;s orders.</p>
+<h3>2.4 Calling another service: <code>services.&lt;name&gt;()</code> (<code>client.ts</code>)</h3>
+<pre><code class="language-ts">export const services = { customer: serviceClient(CUSTOMER_URL), order: serviceClient(ORDER_URL), … };
+
+await services.order(&#39;/me/orders&#39;, { token: userJwt });                    // act as the user
+await services.inventory(&#39;/reservations&#39;, { internal: true, body: {...} }); // act as a trusted service
+</code></pre>
+<p>What <code>serviceClient</code> does on every call:</p>
+<ol>
+<li>Builds the URL plus query string, and sets <code>content-type</code>, <code>authorization</code> (if <code>token</code>) and <code>x-internal-token</code> (if <code>internal</code>).</li>
+<li>Calls <code>fetch</code> with a <strong>15-second timeout</strong>. If the network fails, it throws <code>HttpError(503, &#39;SERVICE_UNAVAILABLE&#39;)</code>.</li>
+<li>If the other service answered with an error, it <strong>re-throws the same status and code</strong>. So a <code>402 PAYMENT_DECLINED</code> from the payment service travels unchanged through the order service and the gateway to the browser.</li>
+</ol>
+<h3>2.5 Database helpers (<code>db.ts</code>, <code>migrate.ts</code>)</h3>
+<ul>
+<li><code>createPool(&#39;tf_order&#39;)</code>: one Postgres connection pool per service, <strong>only its own database</strong>.</li>
+<li><code>one(db, sql, params)</code> / <code>many(...)</code>: run SQL and convert <code>snake_case</code> columns into <code>camelCase</code> objects (<code>total_cents</code> → <code>totalCents</code>).</li>
+<li><code>tx(db, async (c) =&gt; { … })</code>: <code>BEGIN</code> … <code>COMMIT</code>, or <code>ROLLBACK</code> if anything throws.</li>
+<li>SQL is plain and parameterised (<code>$1</code>, <code>$2</code>) to prevent SQL injection. Schema lives in <code>services/&lt;name&gt;/migrations/*.sql</code>, applied by <code>npm run db:migrate</code>.</li>
+</ul>
+<h3>2.6 Configuration (<code>config.ts</code>, <code>ai.ts</code>)</h3>
+<p>All settings come from environment variables (root <code>.env</code> locally), validated once with <strong>zod</strong>: service URLs, <code>JWT_SECRET</code>, <code>INTERNAL_TOKEN</code>, MCP URLs. <code>aiSettings()</code> decides the AI provider (<code>MODEL_PROVIDER=azure|openai|auto</code>) and which deployment and model names to use.</p>
+<h2>3. The gateway (<code>services/gateway/src/index.ts</code>)</h2>
+<p>The gateway is the <strong>only</strong> public backend entry point. It:</p>
+<ol>
+<li><strong>maps public <code>/api/*</code> routes</strong> onto internal services;</li>
+<li><strong>passes the user&#39;s JWT through</strong>, so services authorize the user themselves;</li>
+<li><strong>aggregates</strong> data from several services where the UI needs it;</li>
+<li><strong>streams chat</strong> from the assistant;</li>
+<li><strong>publishes the MCP servers</strong> at <code>/mcp/*</code> for the AI app.</li>
+</ol>
+<p>It <strong>never exposes</strong> <code>/internal/*</code> service routes.</p>
+<h3>3.1 <code>forward()</code>: the heart of the gateway</h3>
+<pre><code class="language-ts">function forward(svc, path, status = 200) {
+  return async (req, res) =&gt; {
+    const data = await services[svc](path(req), {
+      method: req.method,
+      token: req.auth.token,        // the caller&#39;s JWT, passed through unchanged
+      query: req.query,
+      body: [&#39;POST&#39;,&#39;PATCH&#39;,&#39;PUT&#39;].includes(req.method) ? req.body : undefined,
+    });
+    res.status(status).json(data);
+  };
+}
+
+app.get(&#39;/api/me/orders&#39;, requireCustomer, forward(&#39;order&#39;, p(&#39;/me/orders&#39;)));
+app.get(&#39;/api/products/:slug&#39;, forward(&#39;catalog&#39;, (r) =&gt; `/products/${encodeURIComponent(r.params.slug)}`));
+</code></pre>
+<p>Each route is one line: an optional guard (<code>requireCustomer</code> rejects early with 401), then <code>forward(service, path)</code>. The service does the real work and the real authorization.</p>
+<h3>3.2 Aggregation: one call, several services</h3>
+<p><code>GET /api/admin/orders</code> asks the <strong>order</strong> service for orders and the <strong>customer</strong> service for names <em>in parallel</em> (<code>Promise.all</code>), then joins them, so the admin table shows &quot;Alex Rivera&quot; instead of <code>customerId: 2</code>. <code>GET /api/me/summary</code> does the same with three services, using <code>Promise.allSettled</code> so one failing service doesn&#39;t break the page.</p>
+<h3>3.3 Streaming chat: <code>proxyStream()</code></h3>
+<pre><code class="language-ts">const upstream = await fetch(ASSISTANT_URL + &#39;/chat&#39;, { method: &#39;POST&#39;, headers: { authorization }, body, signal });
+res.setHeader(&#39;content-type&#39;, upstream.headers.get(&#39;content-type&#39;));   // text/event-stream
+res.flushHeaders();
+for await (const chunk of upstream.body) res.write(chunk);               // pass each piece through immediately
+</code></pre>
+<ul>
+<li>The assistant answers with <strong>Server-Sent Events (SSE)</strong>: a long HTTP response where each event is <code>event: delta\ndata: {&quot;text&quot;:&quot;Hel&quot;}\n\n</code>.</li>
+<li>The gateway <strong>doesn&#39;t wait</strong> for the whole answer. It copies chunks as they arrive, which is how text appears token by token.</li>
+<li><code>res.on(&#39;close&#39;, () =&gt; ac.abort())</code>: if the user closes the tab or presses <em>Stop</em>, the gateway aborts the upstream request, and the assistant stops the agent run (and the token spending).</li>
+</ul>
+<h3>3.4 Publishing MCP: <code>app.all(&#39;/mcp/:server&#39;)</code></h3>
+<pre><code class="language-ts">const MCP_TARGETS = { catalog: MCP_CATALOG_URL, promotions: MCP_PROMOTIONS_URL, account: MCP_ACCOUNT_URL };
+// copy content-type, accept, authorization (user JWT), mcp-protocol-version …
+headers[&#39;x-mcp-key&#39;] = MCP_AUTH_TOKEN;            // proves &quot;this came through the gateway&quot;
+const upstream = await fetch(target, { method, headers, body });
+// stream the JSON or SSE response back unchanged
+</code></pre>
+<p>The AI app calls <code>http://&lt;gateway&gt;/mcp/account</code> and the gateway relays it to the internal MCP server. More in §7.</p>
+<h3>3.5 Trace 1: &quot;show my orders&quot;</h3>
+<pre><code>1. Browser → Next.js BFF  GET /api/me/orders       (cookie holds the JWT; the BFF adds Authorization: Bearer &lt;jwt&gt;)
+2. BFF     → gateway     GET :3000/api/me/orders  Authorization: Bearer &lt;jwt&gt;
+3. gateway: authenticate → req.auth.customerId = 2 · requireCustomer ✓ · forward(&#39;order&#39;, &#39;/me/orders&#39;)
+4. gateway → order       GET :4004/me/orders      Authorization: Bearer &lt;jwt&gt;   (same JWT)
+5. order:   authenticate verifies the JWT again (never trusts the gateway blindly)
+            actingCustomerId(req) → 2 (from the JWT, not from the URL)
+            SQL: SELECT … FROM orders WHERE customer_id = $1 … [2]  → camelCase rows
+6. order   → gateway → BFF → browser: JSON array of the customer&#39;s orders
+</code></pre>
+<h2>4. Services calling services (<code>services/order</code>)</h2>
+<p>The <strong>checkout</strong> (<code>POST /orders</code> in <code>services/order/src/index.ts</code>) is the best example of microservices working together. It&#39;s a <strong>saga</strong>: a sequence of calls to other services, with <strong>compensating actions</strong> if a later step fails.</p>
+<pre><code>order service                       other services                         on failure
+─────────────                       ──────────────                         ──────────
+1. quote()  ── Promise.all ─────►  catalog  (prices, product info)  ┐
+                                    inventory (availability)         ├ in parallel
+                                    promotion (is the code valid?)  ┘
+2. get address  ───────────────►  customer (/me/addresses, internal)
+3. INSERT order &#39;pending&#39; + item snapshots  (own DB, one transaction)
+4. reserve stock ──────────────►  inventory /reservations (row lock: no overselling)
+5. charge card  ───────────────►  payment  /payments               ─► release reservation, mark cancelled, rethrow
+6. commit stock ───────────────►  inventory /reservations/:id/commit
+7. status → &#39;preparing&#39;
+8. side effects (Promise.allSettled: may fail without failing the order)
+                ───────────────►  promotion (record redemption) · customer (loyalty points) · marketing (inbox message)
+</code></pre>
+<p>Things to notice in the code:</p>
+<ul>
+<li><strong>Prices come from the server</strong>, not the browser: <code>quote()</code> asks the catalog for current prices.</li>
+<li><strong><code>{ internal: true }</code></strong> on calls the customer isn&#39;t directly allowed to make (reserve stock, charge, add points).</li>
+<li><strong>Order items are snapshots</strong> (name, price at purchase), so a later catalog change never rewrites history.</li>
+<li><strong><code>try { reserve → charge → commit } catch { release; cancel; throw }</code></strong> is the compensating action.</li>
+<li><strong><code>Promise.allSettled</code></strong> for non-critical side effects: a marketing outage must not cancel a paid order.</li>
+<li>The inventory service uses <code>SELECT … FOR UPDATE</code> (a row lock) inside a transaction, so two simultaneous checkouts can&#39;t both buy the last tent.</li>
+</ul>
+<h2>5. The AI side: the assistant service (<code>services/assistant/src</code>)</h2>
+<table>
+<thead>
+<tr>
+<th>File</th>
+<th>Job</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>index.ts</code></td>
+<td>Express app: <code>POST /chat</code> (SSE), conversation history, <code>/status</code>, approvals</td>
+</tr>
+<tr>
+<td><code>agent.ts</code></td>
+<td>Builds the <strong>Agent</strong>: model, instructions, tools, MCP servers</td>
+</tr>
+<tr>
+<td><code>openai.ts</code></td>
+<td>Creates the OpenAI client for <strong>Azure OpenAI</strong> (or OpenAI)</td>
+</tr>
+<tr>
+<td><code>rag.ts</code></td>
+<td>RAG tools <code>search_catalog</code> and <code>search_knowledge</code> → <strong>Azure AI Search</strong></td>
+</tr>
+<tr>
+<td><code>mcp.ts</code></td>
+<td>MCP <strong>client</strong> connections to the store (via the gateway)</td>
+</tr>
+<tr>
+<td><code>session.ts</code></td>
+<td><code>PostgresSession</code>: chat memory stored in Postgres</td>
+</tr>
+<tr>
+<td><code>context.ts</code></td>
+<td><code>ShopContext</code>: per-request data the tools can use but the model never sees</td>
+</tr>
+</tbody></table>
+<p><strong>Golden rule:</strong> the assistant is a <em>separate app</em>. It makes <strong>no</strong> <code>services.*</code> calls to store APIs. Store data comes only through <strong>MCP</strong>; product and policy knowledge comes from its own <strong>RAG</strong> indexes.</p>
+<h2>6. Trace 2: one chat message, end to end</h2>
+<p>User (logged in as Alex) types: <em>&quot;Is my latest order on the way, and can I return a GPS watch after 45 days?&quot;</em></p>
+<h3>Step 1: gateway → assistant</h3>
+<p><code>POST /api/chat</code> → <code>proxyStream()</code> → <code>POST :4100/chat</code> with the JWT (§3.3).</p>
+<h3>Step 2: who is it, and which conversation? (<code>index.ts</code>)</h3>
+<pre><code class="language-ts">const auth = req.auth;                                    // from the JWT: customerId 2, name &quot;Alex Rivera&quot;
+const conv = await resolveConversation(conversationId, auth.customerId);
+</code></pre>
+<p><code>resolveConversation</code> applies privacy rules:</p>
+<ul>
+<li><strong>New</strong> → create a row in <code>conversations</code>.</li>
+<li><strong>Guest conversation, user now logged in</strong> → <em>adopt</em> it (<code>adopted: true</code>).</li>
+<li><strong>Belongs to someone else</strong> → start a fresh one, so a different person never sees the history.</li>
+</ul>
+<h3>Step 3: open the SSE stream and tell the browser the basics</h3>
+<pre><code class="language-ts">res.writeHead(200, { &#39;content-type&#39;: &#39;text/event-stream&#39;, … });
+send(&#39;meta&#39;, { conversationId, authenticated: true, customerName: &#39;Alex Rivera&#39; });
+</code></pre>
+<h3>Step 4: build the <strong>RunContext</strong> (private to the server)</h3>
+<pre><code class="language-ts">const context: ShopContext = { conversationId, customer: { id: 2, name: &#39;Alex Rivera&#39;, … }, token: &#39;&lt;jwt&gt;&#39; };
+</code></pre>
+<p>Tools can read <code>context</code>, but the <strong>model never sees it</strong>. Identity lives here, not in the prompt, so a prompt like &quot;show orders for customer 7&quot; can&#39;t change who the tools act for.</p>
+<h3>Step 5: open the user&#39;s own MCP connection</h3>
+<pre><code class="language-ts">const account = await openAccountServer(context.token);   // mcp.ts
+</code></pre>
+<p>A <strong>new</strong> MCP connection to <code>&lt;gateway&gt;/mcp/account</code>, carrying <code>Authorization: Bearer &lt;Alex&#39;s JWT&gt;</code>. It&#39;s closed in <code>finally</code> after the run.</p>
+<h3>Step 6: build the agent (<code>agent.ts</code>)</h3>
+<pre><code class="language-ts">new Agent&lt;ShopContext&gt;({
+  name: &#39;TrailForge Assistant&#39;,
+  model: CHAT_MODEL,                         // &#39;gpt-5-mini&#39; = your Azure DEPLOYMENT name
+  instructions,                              // a FUNCTION: different text for guests vs logged-in users
+  tools: [searchCatalog, searchKnowledge],   // local function tools → RAG
+  mcpServers: [catalog, promotions, account] // remote tools from the store
+});
+</code></pre>
+<h3>Step 7: run it: the <strong>agent loop</strong> (<code>run()</code> from the Agents SDK)</h3>
+<pre><code class="language-ts">const stream = await run(assistant, input, {
+  stream: true, context, session: new PostgresSession(db, conv.id), maxTurns: 12, signal: abort.signal,
+});
+</code></pre>
+<p>What the SDK does inside <code>run()</code>:</p>
+<pre><code>a. session.getItems()              → load earlier messages of this conversation from Postgres
+b. list tools                      → our 2 function tools + MCP tools (tools/list on each MCP connection,
+                                     catalog filtered to get_product/check_stock/get_reviews)
+c. CALL THE MODEL (Azure OpenAI)   → instructions + history + new message + tool definitions
+d. model replies with TOOL CALLS   → get_my_orders {} · search_knowledge {&quot;query&quot;:&quot;GPS watch return window&quot;}
+e. SDK EXECUTES them               → get_my_orders → MCP tools/call over HTTP (§7)
+                                     search_knowledge → our execute() → Azure AI Search (§9)
+f. results go back to the model    → it may call more tools (get_order_details …) → repeat c–f
+g. model replies with FINAL TEXT   → streamed token by token
+h. session.addItems(newItems)      → save the user message, tool calls, results and answer
+</code></pre>
+<p><code>maxTurns: 12</code> stops a runaway loop. <code>signal</code> stops it when the browser disconnects.</p>
+<h3>Step 8: turn SDK events into SSE for the browser (<code>forward()</code> in <code>index.ts</code>)</h3>
+<table>
+<thead>
+<tr>
+<th>SDK stream event</th>
+<th>SSE sent</th>
+<th>Browser shows</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>raw_model_stream_event</code> with <code>output_text_delta</code></td>
+<td><code>delta</code></td>
+<td>text appearing</td>
+</tr>
+<tr>
+<td><code>run_item_stream_event</code> / <code>tool_called</code></td>
+<td><code>tool_call</code></td>
+<td>a tool card &quot;search_knowledge…&quot;</td>
+</tr>
+<tr>
+<td><code>run_item_stream_event</code> / <code>tool_output</code></td>
+<td><code>tool_result</code> (+ <code>auth_required</code> if the output contains <code>AUTH_REQUIRED</code>)</td>
+<td>tool result / Log in button</td>
+</tr>
+<tr>
+<td><code>agent_updated_stream_event</code></td>
+<td><code>agent</code></td>
+<td>agent name (after handoffs, Phase 7)</td>
+</tr>
+<tr>
+<td>run finished</td>
+<td><code>done</code> with token usage</td>
+<td>&quot;12 000 in · 600 out · 3 model calls&quot;</td>
+</tr>
+</tbody></table>
+<h3>Step 9: clean up</h3>
+<p><code>finally { await account.close(); res.end(); }</code></p>
+<h2>7. How MCP calls work (the store&#39;s tools)</h2>
+<h3>7.1 The client side (assistant, <code>mcp.ts</code>)</h3>
+<pre><code class="language-ts">// shared, opened once at startup (dropFailed: a server that&#39;s down is skipped, retried every 30 s)
+new MCPServerStreamableHttp({ name: &#39;catalog&#39;, url: `${STORE_MCP_BASE_URL}/catalog`,
+  toolFilter: createMCPToolStaticFilter({ allowed: [&#39;get_product&#39;, &#39;check_stock&#39;, &#39;get_reviews&#39;] }) });
+new MCPServerStreamableHttp({ name: &#39;promotions&#39;, url: `${STORE_MCP_BASE_URL}/promotions` });
+
+// per request, as the user
+new MCPServerStreamableHttp({ name: &#39;account&#39;, url: `${STORE_MCP_BASE_URL}/account`,
+  requestInit: { headers: { Authorization: `Bearer ${userJwt}` } } });
+</code></pre>
+<p><code>STORE_MCP_BASE_URL</code> is the <strong>public gateway</strong> (<code>http://localhost:3000/mcp</code>), never internal addresses.</p>
+<h3>7.2 On the wire</h3>
+<p>When the model calls <code>get_my_orders</code>, the SDK sends one JSON-RPC message:</p>
+<pre><code class="language-http">POST http://localhost:3000/mcp/account
+Authorization: Bearer &lt;Alex&#39;s JWT&gt;
+Content-Type: application/json
+Accept: application/json, text/event-stream
+
+{&quot;jsonrpc&quot;:&quot;2.0&quot;,&quot;id&quot;:7,&quot;method&quot;:&quot;tools/call&quot;,&quot;params&quot;:{&quot;name&quot;:&quot;get_my_orders&quot;,&quot;arguments&quot;:{}}}
+</code></pre>
+<p>The gateway relays it (adding <code>x-mcp-key</code>) to <code>mcp-account :4203</code>, which answers:</p>
+<pre><code>event: message
+data: {&quot;jsonrpc&quot;:&quot;2.0&quot;,&quot;id&quot;:7,&quot;result&quot;:{&quot;content&quot;:[{&quot;type&quot;:&quot;text&quot;,&quot;text&quot;:&quot;[{\&quot;number\&quot;:\&quot;TF-100099\&quot;,\&quot;status\&quot;:\&quot;on_the_way\&quot;,…}]&quot;}]}}
+</code></pre>
+<h3>7.3 The server side (<code>packages/mcp-kit</code> + <code>services/mcp-account</code>)</h3>
+<pre><code class="language-ts">app.post(&#39;/mcp&#39;, serviceKey, async (req, res) =&gt; {             // serviceKey: x-mcp-key must match
+  const server = buildServer({ userToken: &lt;Bearer token or null&gt; });  // NEW server per request
+  const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined }); // stateless
+  await server.connect(transport);
+  await transport.handleRequest(req, res, req.body);            // SDK parses JSON-RPC, calls the tool
+});
+</code></pre>
+<p>Inside <code>mcp-account</code>, every tool runs <strong>as that user</strong>:</p>
+<pre><code class="language-ts">async () =&gt; asUser(&#39;their orders&#39;, (t) =&gt; services.order(&#39;/me/orders&#39;, { token: t }), json)
+//          ↑ no token → &quot;AUTH_REQUIRED: …&quot;   ↑ calls the order SERVICE with the user&#39;s JWT (store side)
+</code></pre>
+<p>So the chain is: <strong>model → SDK → MCP client → gateway → MCP server → order service → Postgres</strong>. The order service verifies the JWT, as in Trace 1.</p>
+<p><strong>Why a new server per request (&quot;stateless&quot;)?</strong> Nothing is kept between requests, so any copy of the MCP server can answer any call (easy scaling), and the user&#39;s token naturally belongs to exactly one request.</p>
+<h2>8. How the assistant calls Azure OpenAI (<code>openai.ts</code>)</h2>
+<pre><code class="language-ts">const baseURL = `${AZURE_OPENAI_ENDPOINT}/openai/v1/`;        // Azure&#39;s OpenAI-compatible endpoint
+const apiKey  = AZURE_OPENAI_API_KEY
+  || getBearerTokenProvider(new DefaultAzureCredential(), &#39;https://cognitiveservices.azure.com/.default&#39;);
+const client  = new OpenAI({ baseURL, apiKey });
+setDefaultOpenAIClient(client);                                // the Agents SDK now uses Azure
+</code></pre>
+<ul>
+<li><strong>The same <code>openai</code> package</strong> talks to Azure; only the URL and the credential change.</li>
+<li><strong>No key in <code>.env</code>?</strong> <code>DefaultAzureCredential</code> finds a login automatically: your <code>az login</code> locally, the Managed Identity on Azure. <code>getBearerTokenProvider</code> returns a <em>function</em>. The SDK calls it before each request to get a fresh token (≈1 hour lifetime), sent as <code>Authorization: Bearer &lt;entra token&gt;</code>.</li>
+<li><strong><code>model: &#39;gpt-5-mini&#39;</code></strong> is the Azure <strong>deployment name</strong>.</li>
+<li>Each agent turn is roughly <code>POST &lt;endpoint&gt;/openai/v1/responses</code> with the instructions, history, tool schemas and <code>stream: true</code>. Azure checks the token, your role (<em>Cognitive Services OpenAI User</em>) and the quota, then streams back.</li>
+<li>Embeddings (for RAG) use the same client: <code>client.embeddings.create({ model: &#39;text-embedding-3-small&#39;, input })</code> → 1536 numbers.</li>
+</ul>
+<h2>9. How the assistant calls Azure AI Search: RAG (<code>rag.ts</code>)</h2>
+<h3>9.1 Setup</h3>
+<pre><code class="language-ts">const credential = AZURE_SEARCH_API_KEY ? new AzureKeyCredential(key) : new DefaultAzureCredential();
+const products  = new SearchClient(AZURE_SEARCH_ENDPOINT, &#39;tf-products&#39;,  credential);
+const knowledge = new SearchClient(AZURE_SEARCH_ENDPOINT, &#39;tf-knowledge&#39;, credential);
+const embedder  = createOpenAIClient(ai.embeddings);   // Azure OpenAI, for query embeddings
+</code></pre>
+<h3>9.2 What one <code>search_knowledge</code> call does</h3>
+<pre><code class="language-ts">// 1. embed the question (same model the index was built with)
+const vector = (await embedder.embeddings.create({ model: &#39;text-embedding-3-small&#39;, input: query })).data[0].embedding;
+
+// 2. HYBRID search: keywords + vector, then the semantic re-ranker
+await knowledge.search(query, {
+  top: 5,
+  select: [&#39;id&#39;,&#39;source&#39;,&#39;title&#39;,&#39;section&#39;,&#39;chunkIndex&#39;,&#39;content&#39;],          // only fields this index has
+  vectorSearchOptions: { queries: [{ kind: &#39;vector&#39;, vector, fields: [&#39;contentVector&#39;], kNearestNeighborsCount: 50 }] },
+  queryType: &#39;semantic&#39;, semanticSearchOptions: { configurationName: &#39;semantic&#39; },
+});
+
+// 3. format passages with citation ids for the model
+&quot;[returns-and-refunds.md#1] Returns and Refunds Policy › The return window\n- Electronics … 30 days …&quot;
+</code></pre>
+<p>The SDK turns that into <code>POST https://&lt;search&gt;.search.windows.net/indexes/tf-knowledge/docs/search?api-version=…</code> with an Entra token (your <strong>Search Index Data Contributor</strong> role locally; the Managed Identity on Azure). Azure AI Search runs BM25 keyword ranking and HNSW vector nearest-neighbours, fuses them with <strong>RRF</strong>, and re-ranks with the semantic model.</p>
+<h3>9.3 <code>search_catalog</code> adds filters and counts</h3>
+<ul>
+<li><strong>Filters</strong> (OData) built from tool arguments: <code>category eq &#39;tents&#39; and priceCents le 40000 and tags/any(t: t eq &#39;vegan&#39;)</code>.</li>
+<li><strong>Dedupe:</strong> each product has about 5 chunks; keep the best chunk per <code>slug</code>.</li>
+<li><strong>&quot;List all products&quot;:</strong> a second query <code>search(&#39;*&#39;, { top: 0, facets: [&#39;category&#39;], filter: &#39;chunkIndex eq 0&#39; })</code> counts <strong>one chunk per product</strong>, so the counts are products (12 per category), not chunks.</li>
+<li><strong>Fallbacks:</strong> no <code>AZURE_SEARCH_ENDPOINT</code> → <code>SEARCH_UNAVAILABLE</code> (the agent says search is unavailable instead of guessing). Semantic ranker not available → plain hybrid.</li>
+</ul>
+<h3>9.4 Where the index came from (<code>scripts/rag/src/ingest.ts</code>)</h3>
+<p>Offline, not at chat time: read <code>rag/*/*.md</code> → split on <code>##</code> headings (~900 chars, 150 overlap) → embed in batches of 16 with Azure OpenAI → <code>createOrUpdateIndex(schema)</code> → <code>mergeOrUploadDocuments</code> in batches of 500.</p>
+<h2>10. All the credentials in one table</h2>
+<table>
+<thead>
+<tr>
+<th>Credential</th>
+<th>Header / mechanism</th>
+<th>From → to</th>
+<th>Checked by</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>User JWT</strong></td>
+<td><code>Authorization: Bearer &lt;jwt&gt;</code></td>
+<td>browser → gateway → services; assistant → gateway <code>/mcp/account</code> → mcp-account → services</td>
+<td>every service&#39;s <code>authenticate</code> (<code>JWT_SECRET</code>)</td>
+</tr>
+<tr>
+<td><strong>Internal token</strong></td>
+<td><code>x-internal-token</code></td>
+<td>store service → store service</td>
+<td><code>authenticate</code> → <code>requireInternal</code></td>
+</tr>
+<tr>
+<td><strong>MCP key</strong></td>
+<td><code>x-mcp-key</code></td>
+<td>gateway → MCP servers</td>
+<td><code>mcp-kit</code> <code>serviceKey</code> (if <code>MCP_AUTH_TOKEN</code> set)</td>
+</tr>
+<tr>
+<td><strong>Entra ID token</strong></td>
+<td><code>Authorization: Bearer &lt;entra&gt;</code> via <code>DefaultAzureCredential</code></td>
+<td>assistant / ingest → Azure OpenAI, Azure AI Search</td>
+<td>Azure (RBAC roles)</td>
+</tr>
+</tbody></table>
+<h2>11. When things fail</h2>
+<table>
+<thead>
+<tr>
+<th>Failure</th>
+<th>What the code does</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>A service is down</td>
+<td><code>serviceClient</code> → <code>503 SERVICE_UNAVAILABLE</code>; gateway returns it to the browser</td>
+</tr>
+<tr>
+<td>A downstream error (e.g. card declined <code>402</code>)</td>
+<td>Re-thrown with the same status/code all the way up</td>
+</tr>
+<tr>
+<td>Payment fails mid-checkout</td>
+<td>Saga compensation: release the reservation, mark the order cancelled</td>
+</tr>
+<tr>
+<td>Non-critical side effect fails</td>
+<td><code>Promise.allSettled</code> → logged, the order still succeeds</td>
+</tr>
+<tr>
+<td>An MCP server is down</td>
+<td><code>dropFailed</code>: the agent runs without those tools and says that part is unavailable; retried every 30 s</td>
+</tr>
+<tr>
+<td>Guest asks for orders</td>
+<td>mcp-account answers <code>AUTH_REQUIRED</code> → <code>auth_required</code> SSE → Log in button</td>
+</tr>
+<tr>
+<td>Search not configured</td>
+<td><code>SEARCH_UNAVAILABLE</code> → the agent doesn&#39;t guess</td>
+</tr>
+<tr>
+<td>User closes the tab</td>
+<td>Gateway aborts → assistant <code>signal</code> aborts the run</td>
+</tr>
+<tr>
+<td>Model loops on tools</td>
+<td><code>maxTurns: 12</code> stops it</td>
+</tr>
+</tbody></table>
+<h2>12. Read the code in this order</h2>
+<ol>
+<li><code>packages/shared/src/http.ts</code>, <code>auth.ts</code>, <code>client.ts</code>, <code>errors.ts</code>, <code>db.ts</code>: the toolkit (§2).</li>
+<li><code>services/catalog/src/index.ts</code>: a simple service with read routes.</li>
+<li><code>services/gateway/src/index.ts</code>: <code>forward()</code>, aggregation, <code>proxyStream</code>, <code>/mcp/:server</code> (§3).</li>
+<li><code>services/order/src/index.ts</code>: the checkout saga, returns, stages (§4).</li>
+<li><code>services/assistant/src/index.ts</code> → <code>agent.ts</code> → <code>openai.ts</code> → <code>rag.ts</code> → <code>mcp.ts</code> → <code>session.ts</code> (§5–9).</li>
+<li><code>packages/mcp-kit/src/index.ts</code> → <code>services/mcp-account/src/index.ts</code> (§7).</li>
+<li><code>scripts/rag/src/ingest.ts</code> (§9.4).</li>
+</ol>
+<h2>13. Exercises (to make it stick)</h2>
+<ol>
+<li><strong>Watch a request travel:</strong> run <code>npm run dev</code>, open &quot;My orders&quot; in the store, and find the matching <code>GET /api/me/orders</code> line in the gateway log and <code>GET /me/orders</code> in the order log.</li>
+<li><strong>Call a service directly:</strong> <code>curl localhost:4002/products?q=tent</code> (the catalog, bypassing the gateway). Then <code>curl localhost:4004/me/orders</code> without a token → 401. Why?</li>
+<li><strong>Speak MCP:</strong> <code>npm run mcp:cli -- --server account --method tools/call --tool-name get_my_orders</code> → <code>AUTH_REQUIRED</code>. Then add <code>--header &quot;Authorization: Bearer &lt;token&gt;&quot;</code> (see the MCP guide).</li>
+<li><strong>See the agent loop:</strong> in <code>services/assistant/src/index.ts</code> → <code>forward()</code>, add <code>console.log(event.type, event.name)</code> and send one chat message. Count the model calls and tool calls.</li>
+<li><strong>Query RAG yourself:</strong> in Azure portal → <code>tf-knowledge</code> → Search explorer, search <code>GPS watch return</code>, and compare with what <code>search_knowledge</code> returned in the chat tool card.</li>
+<li><strong>Break it on purpose:</strong> stop <code>mcp-catalog</code>, ask &quot;is the Ridgeline tent in stock?&quot; and see how the assistant degrades.</li>
+</ol>
+<h2>14. Glossary</h2>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>Meaning here</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>BFF / gateway</strong></td>
+<td>Backend-for-frontend: one public API in front of many services</td>
+</tr>
+<tr>
+<td><strong>Saga</strong></td>
+<td>A multi-service operation with compensating steps instead of one big transaction</td>
+</tr>
+<tr>
+<td><strong>SSE</strong></td>
+<td>Server-Sent Events: one long HTTP response carrying many small events</td>
+</tr>
+<tr>
+<td><strong>JWT</strong></td>
+<td>Signed token saying who the user is; verified with <code>JWT_SECRET</code></td>
+</tr>
+<tr>
+<td><strong>RunContext</strong></td>
+<td>Per-run data for tools and instructions, never sent to the model</td>
+</tr>
+<tr>
+<td><strong>Session</strong></td>
+<td>Where the Agents SDK loads and saves conversation history (<code>PostgresSession</code>)</td>
+</tr>
+<tr>
+<td><strong>Function tool</strong></td>
+<td>A tool implemented in the assistant&#39;s own code (<code>search_catalog</code>)</td>
+</tr>
+<tr>
+<td><strong>MCP tool</strong></td>
+<td>A tool implemented by another process, called via JSON-RPC over HTTP</td>
+</tr>
+<tr>
+<td><strong>Hybrid search</strong></td>
+<td>Keyword (BM25) + vector similarity, fused with RRF</td>
+</tr>
+<tr>
+<td><strong>Embedding</strong></td>
+<td>1536 numbers representing the meaning of a text</td>
+</tr>
+<tr>
+<td><strong>DefaultAzureCredential</strong></td>
+<td>Finds an Azure login automatically (az login / Managed Identity)</td>
+</tr>
+</tbody></table>
+<p>Related: <a href="architecture.html">Architecture &amp; Contracts</a> · <a href="mcp-guide.html">MCP Guide</a> · <a href="azure-openai-setup.html">Azure OpenAI Setup</a> · <a href="azure-ai-search-rag-setup.html">Azure AI Search for RAG</a> · <a href="monorepo-guide.html">Monorepo Guide</a></p>
+</main></div></body></html>

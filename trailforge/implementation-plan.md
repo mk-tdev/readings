@@ -3,7 +3,7 @@
 > A full-stack outdoor & hiking gear store built as microservices, with an agentic AI assistant made only with the **OpenAI Agents SDK (JS)**, with no orchestration framework. Learning project: every concept is implemented "raw" so you can see how it works.
 >
 > **Status legend:** ✅ done · 🟡 in progress / partly done · ⬜ not started · 🔒 blocked (needs Azure)
-> **Last updated:** 2026-10-17 · See also [Deployment Plan](deployment-plan.md), [Architecture & Contracts](architecture.md), [Application Context](application-context.md), [Monorepo Guide](monorepo-guide.md), [MCP Guide](mcp-guide.md), [Azure OpenAI Setup](azure-openai-setup.md), [Azure AI Search for RAG](azure-ai-search-rag-setup.md), [RAG in the Azure Portal](azure-ai-search-portal-rag.md)
+> **Last updated:** 2026-10-17 · See also [Deployment Plan](deployment-plan.md), [Architecture & Contracts](architecture.md), [Application Context](application-context.md), [Monorepo Guide](monorepo-guide.md), [MCP Guide](mcp-guide.md), [Azure OpenAI Setup](azure-openai-setup.md), [Azure AI Search for RAG](azure-ai-search-rag-setup.md), [RAG in the Azure Portal](azure-ai-search-portal-rag.md), [Backend Walkthrough](backend-walkthrough.md)
 
 ## 1. Goals
 

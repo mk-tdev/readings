@@ -1,0 +1,221 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Sandbox Agents 101 · Agentic AI on Azure</title>
+<meta name="description" content="A quick primer on sandbox agents in the OpenAI Agents SDK: manifests, sandbox sessions, built-in capabilities, providers, and memory." />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/styles/github.min.css" media="(prefers-color-scheme: light)" id="hl-light" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/styles/github-dark.min.css" media="(prefers-color-scheme: dark)" id="hl-dark" />
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/highlight.min.js"></script>
+<style>
+:root { --bg:#ffffff; --bg-soft:#f6f8fa; --text:#1f2328; --muted:#59636e; --border:#d1d9e0;
+  --accent:#2563eb; --accent-soft:#e8f0fe; --code-bg:#f3f4f6; }
+@media (prefers-color-scheme: dark) {
+  :root { --bg:#0d1117; --bg-soft:#151b23; --text:#e6edf3; --muted:#9198a1; --border:#2f3742;
+    --accent:#4c8dff; --accent-soft:#172440; --code-bg:#1b2129; }
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--bg); color: var(--text); }
+body { font: 17px/1.7 Inter, system-ui, -apple-system, "Segoe UI", sans-serif; }
+code, pre { font-family: "JetBrains Mono", ui-monospace, Menlo, monospace; }
+a { color: var(--accent); }
+.wrap { max-width: 760px; margin: 0 auto; padding: 48px 24px 96px; }
+.eyebrow { display: inline-block; font-size: 13px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase;
+  color: var(--accent); background: var(--accent-soft); padding: 4px 10px; border-radius: 999px; margin-bottom: 16px; }
+h1 { font-size: 2.1em; line-height: 1.2; margin: 0 0 8px; }
+h2 { margin-top: 2.2em; padding-top: .4em; border-top: 1px solid var(--border); }
+h3 { margin-top: 1.6em; }
+blockquote { margin: 0 0 1.5em; padding: 10px 16px; border-left: 3px solid var(--accent); background: var(--accent-soft); border-radius: 0 8px 8px 0; color: var(--muted); }
+blockquote p { margin: 0; }
+p, li { color: var(--text); }
+table { border-collapse: collapse; width: 100%; margin: 1.2em 0; font-size: .95em; }
+th, td { border: 1px solid var(--border); padding: 8px 12px; text-align: left; }
+th { background: var(--bg-soft); }
+code { background: var(--code-bg); padding: .15em .4em; border-radius: 5px; font-size: .9em; }
+pre { background: var(--code-bg); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; overflow-x: auto; }
+pre code { background: none; padding: 0; }
+details { background: var(--bg-soft); border: 1px solid var(--border); border-radius: 8px; padding: 10px 14px; margin: .5em 0 1em; }
+summary { cursor: pointer; font-weight: 600; color: var(--accent); }
+hr { border: none; border-top: 1px solid var(--border); margin: 2.5em 0; }
+.footer-links { margin-top: 3em; padding-top: 1.5em; border-top: 1px solid var(--border); color: var(--muted); font-size: .95em; }
+.badge-row { display:flex; gap:8px; flex-wrap:wrap; margin-bottom: 24px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+<a class="hub-link" href="./" style="display:inline-block;margin:0 0 14px;font-size:14px">← 101 primers</a> · <a class="hub-link" href="../" style="font-size:14px">All readings</a>
+<span class="eyebrow">101 · Agents SDK</span>
+<h1>Sandbox Agents 101 — OpenAI Agents SDK</h1>
+<blockquote>
+<p>A quick, standalone primer. This repo&#39;s agent never runs arbitrary shell commands or edits a filesystem — its tools are narrow, purpose-built functions (<code>create_note</code>, <code>convert_units</code>, <code>search_knowledge</code>). Sandbox agents are the SDK&#39;s answer to a different, riskier job: letting a model actually <em>operate a computer</em>.</p>
+</blockquote>
+<h2>The problem it solves</h2>
+<p>A tool like <code>convert_units</code> does exactly one thing and nothing else — there&#39;s no way to misuse it into running <code>rm -rf /</code>. But some agents genuinely need an open-ended environment: a coding agent that edits files and runs tests, a data-analysis agent that writes and executes scripts. Giving a model raw shell access is dangerous without <strong>isolation</strong> (what can it reach?) and <strong>structure</strong> (what&#39;s already in its workspace, and what happens to its work afterward?).</p>
+<p><strong>Sandbox agents</strong> extend the normal <code>Agent</code> with exactly that: a declared starting workspace, a set of scoped, sandbox-aware built-in tools (shell, filesystem), and a pluggable <em>provider</em> that actually isolates execution — anything from &quot;none, it&#39;s your own machine&quot; to a container to a fully hosted environment.</p>
+<h2><code>SandboxAgent</code> — still a normal agent</h2>
+<pre><code class="language-ts">import { SandboxAgent, Manifest, file, gitRepo } from &quot;@openai/agents&quot;;
+
+const agent = new SandboxAgent({
+  name: &quot;Coding assistant&quot;,
+  instructions: &quot;Fix the failing test, then explain the change.&quot;,
+  defaultManifest: new Manifest({
+    root: &quot;/workspace&quot;,
+    entries: {
+      &quot;task.md&quot;: file({ content: &quot;Fix the failing test.&quot; }),
+      repo: gitRepo({ repo: &quot;your-org/your-repo&quot;, ref: &quot;main&quot; }),
+    },
+    environment: { NODE_ENV: &quot;test&quot; },
+  }),
+});
+</code></pre>
+<p>It keeps everything you already know from <code>Agent</code> — <code>instructions</code>, <code>tools</code>, <code>handoffs</code>, MCP servers, guardrails, lifecycle hooks, and the same <code>run()</code>/<code>Runner</code> API. On top of that it adds sandbox-specific defaults: a <code>defaultManifest</code>, optional <code>baseInstructions</code>, <code>runAs</code> (the user identity for model-facing shell/file operations), and <code>capabilities</code>.</p>
+<h2>Two concepts: Manifest vs. sandbox session</h2>
+<p>These sound similar and are easy to mix up:</p>
+<table>
+<thead>
+<tr>
+<th></th>
+<th><strong>Manifest</strong></th>
+<th><strong>Sandbox session</strong></th>
+</tr>
+</thead>
+<tbody><tr>
+<td>What it is</td>
+<td>A <em>declaration</em> of what a fresh workspace starts with — files, repos, mounts, env vars, path grants</td>
+<td>The <em>live</em> execution environment where commands actually run and files actually change</td>
+</tr>
+<tr>
+<td>When it matters</td>
+<td>Only at session creation</td>
+<td>For the whole run, and potentially across multiple runs</td>
+</tr>
+</tbody></table>
+<p>A manifest is a recipe; a session is the kitchen actually cooking it.</p>
+<h2>Lifecycle: who owns the session?</h2>
+<p><strong>SDK-owned</strong> — simplest option, one session per run:</p>
+<pre><code class="language-ts">import { run } from &quot;@openai/agents&quot;;
+import { UnixLocalSandboxClient } from &quot;@openai/agents&quot;;
+
+const result = await run(agent, &quot;Inspect the workspace.&quot;, {
+  sandbox: { client: new UnixLocalSandboxClient() },
+});
+</code></pre>
+<p><strong>Developer-owned</strong> — reuse one session across multiple <code>run()</code> calls (e.g. a multi-step task), and close it yourself:</p>
+<pre><code class="language-ts">const client = new UnixLocalSandboxClient();
+const session = await client.create({ manifest });
+try {
+  await run(agent, &quot;First task.&quot;, { sandbox: { session } });
+  await run(agent, &quot;Follow-up task.&quot;, { sandbox: { session } }); // same workspace, same files
+} finally {
+  await session.close?.();
+}
+</code></pre>
+<p>You can also <strong>resume</strong> a previous session via runner-managed <code>RunState</code>, an explicit <code>sandbox.sessionState</code>, or a <code>sandbox.snapshot</code> fed into a fresh session — useful for picking up long-running work across process restarts, the same way <a href="human-in-the-loop-101.html">human-in-the-loop</a> resumes a paused run from <code>RunState</code>.</p>
+<h2>Capabilities: the built-in sandbox tools</h2>
+<p>Instead of you hand-writing a &quot;run shell command&quot; tool (and getting the security boundary subtly wrong), the SDK ships ready-made <strong>capabilities</strong> that attach a matched set of tools to the live session:</p>
+<table>
+<thead>
+<tr>
+<th>Capability</th>
+<th>Adds</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>shell()</code></td>
+<td><code>exec_command</code> (+ <code>write_stdin</code> if the provider supports a PTY)</td>
+<td>Runs commands as the <code>runAs</code> user</td>
+</tr>
+<tr>
+<td><code>filesystem()</code></td>
+<td><code>apply_patch</code>, <code>view_image</code></td>
+<td>Patch-based file edits; images up to 10 MB by file-signature detection</td>
+</tr>
+<tr>
+<td><code>skills()</code></td>
+<td>—</td>
+<td>Reusable task playbooks</td>
+</tr>
+<tr>
+<td><code>memory()</code></td>
+<td>—</td>
+<td>Learn from earlier runs (needs <code>shell()</code>; live updates need <code>filesystem()</code> — see below)</td>
+</tr>
+<tr>
+<td><code>compaction()</code></td>
+<td>—</td>
+<td>Keeps long sandbox transcripts manageable</td>
+</tr>
+</tbody></table>
+<p>The default set is <code>filesystem()</code> + <code>shell()</code> + <code>compaction()</code>. <strong>Passing your own <code>capabilities</code> array replaces the default entirely</strong> — if you still want shell access, list it explicitly.</p>
+<h2>Sandbox providers: where isolation actually comes from</h2>
+<p>The capability tools are the same regardless of provider; what changes is <em>how real the isolation is</em>:</p>
+<table>
+<thead>
+<tr>
+<th>Client</th>
+<th>Isolation</th>
+<th>Use for</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>UnixLocalSandboxClient</code></td>
+<td><strong>None</strong> — runs directly on your machine (macOS/Linux)</td>
+<td>Trusted local development only</td>
+</tr>
+<tr>
+<td><code>DockerSandboxClient</code></td>
+<td>Container boundary, with host↔sandbox path grants</td>
+<td>Local testing of less-trusted commands</td>
+</tr>
+<tr>
+<td>Hosted / provider-managed clients</td>
+<td>Fully isolated, provider-operated</td>
+<td>Anything running untrusted or model-generated commands — the recommended default for production</td>
+</tr>
+</tbody></table>
+<blockquote>
+<p><strong>Don&#39;t skip this:</strong> <code>UnixLocalSandboxClient</code> explicitly provides <strong>no OS-level confinement</strong>. If an agent might run commands shaped by a prompt-injected input (the same threat model as <code>guides/04-mcp.md</code> (in the agentic-ai course)&#39;s SSRF section), that&#39;s a Docker or hosted client, not local.</p>
+</blockquote>
+<p>Windows requires Docker or a hosted provider — there&#39;s no local-unix option there.</p>
+<h2>Memory: letting later runs learn from earlier ones</h2>
+<p><code>memory()</code> is worth calling out on its own: it lets a sandbox agent write distilled notes about what it learned (<code>memories/MEMORY.md</code>, a short <code>memory_summary.md</code>) back into the <em>workspace itself</em>, so a later run against the same persisted session starts smarter instead of re-discovering the same things.</p>
+<ul>
+<li>A short summary is injected into the prompt at the start of every run; the agent can dig into the fuller <code>MEMORY.md</code> if it needs more detail.</li>
+<li>After a run, an extraction pass summarizes what happened, and a consolidation pass merges it into the workspace&#39;s memory files.</li>
+<li>Memory only survives if you keep the same live session, or resume from saved session state / a snapshot — a brand-new sandbox always starts empty.</li>
+<li><code>memory({ generate: false })</code> gives you read-only memory (good for a one-off checker agent); <code>memory({ read: null })</code> lets a run generate memory without being influenced by what&#39;s already there.</li>
+</ul>
+<p>Treat memory files as retained data under your normal workspace sensitivity/retention rules — they&#39;re plain files that persist across runs, not an ephemeral scratchpad.</p>
+<h2>Composition with handoffs and <code>asTool()</code></h2>
+<ul>
+<li>A <strong>handoff</strong> keeps everything inside one top-level run — the sandbox session carries over.</li>
+<li><code>agent.asTool()</code> starts a <strong>nested run with its own turn loop</strong> — same rules as regular agents-as-tools (see <code>guides/05-agents-sdk.md</code> (in the agentic-ai course), &quot;Handoffs vs agents-as-tools&quot;), just now operating inside (or against) a sandbox.</li>
+</ul>
+<h2>Common mistakes</h2>
+<ul>
+<li><strong>Using <code>UnixLocalSandboxClient</code> for anything beyond trusted local dev.</strong> It&#39;s explicitly unconfined — there&#39;s no sandbox there at all, just your own shell.</li>
+<li><strong>Passing a custom <code>capabilities</code> list and forgetting <code>shell()</code> or <code>filesystem()</code></strong> — it replaces the defaults rather than extending them.</li>
+<li><strong>Expecting memory to persist across unrelated sandbox sessions.</strong> It only survives within one live/resumed session; a fresh sandbox is always a blank slate.</li>
+<li><strong>Confusing a Manifest with a running session.</strong> The manifest only describes what a <em>new</em> workspace starts with — it has no bearing on a session already in progress.</li>
+</ul>
+<h2>Check your understanding</h2>
+<ol>
+<li>What&#39;s the practical difference between a Manifest and a sandbox session?<details><summary>Answer</summary>A Manifest is a declarative description of what a fresh workspace should start with (files, repos, env); a sandbox session is the actual live environment where commands run and files change over the course of a run.</details></li>
+<li>Why is <code>UnixLocalSandboxClient</code> inappropriate for running commands derived from untrusted or model-generated input?<details><summary>Answer</summary>It provides no OS-level confinement — commands run directly on your own machine with no isolation boundary. Use `DockerSandboxClient` or a hosted provider for anything beyond trusted local development.</details></li>
+<li>If you pass your own <code>capabilities</code> array to a <code>SandboxAgent</code>, what happens to the default <code>filesystem()</code>/<code>shell()</code>/<code>compaction()</code> set?<details><summary>Answer</summary>It's replaced entirely, not merged — you must explicitly re-list any default capability you still want.</details></li>
+</ol>
+<h2>Next steps</h2>
+<ul>
+<li>Compare with this repo&#39;s actual tool model (narrow, purpose-built functions instead of an open shell): <a href="mcp-101.html"><code>mcp-101.md</code></a> and <code>guides/04-mcp.md</code> (in the agentic-ai course).</li>
+<li>Resuming paused/long-running work shares ideas with sandbox session resumption: <a href="human-in-the-loop-101.html"><code>human-in-the-loop-101.md</code></a>.</li>
+<li>Official docs: openai.github.io/openai-agents-js/guides/sandbox-agents</li>
+</ul>
+<p class="footer-links">Part of the <strong>Agentic AI on Azure</strong> course repo · also available as plain Markdown (<code>guides/101/</code>) and in the interactive study site (<code>npm run study</code>).</p>
+</div>
+<script>hljs.highlightAll();</script>
+</body>
+</html>

@@ -1,0 +1,211 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Testing and Evals 101 · Agentic AI on Azure</title>
+<meta name="description" content="A quick primer on testing in the OpenAI Agents SDK: ScriptedModel, sandbox and realtime test doubles, and how testing differs from evals." />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/styles/github.min.css" media="(prefers-color-scheme: light)" id="hl-light" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/styles/github-dark.min.css" media="(prefers-color-scheme: dark)" id="hl-dark" />
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/highlight.min.js"></script>
+<style>
+:root { --bg:#ffffff; --bg-soft:#f6f8fa; --text:#1f2328; --muted:#59636e; --border:#d1d9e0;
+  --accent:#2563eb; --accent-soft:#e8f0fe; --code-bg:#f3f4f6; }
+@media (prefers-color-scheme: dark) {
+  :root { --bg:#0d1117; --bg-soft:#151b23; --text:#e6edf3; --muted:#9198a1; --border:#2f3742;
+    --accent:#4c8dff; --accent-soft:#172440; --code-bg:#1b2129; }
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--bg); color: var(--text); }
+body { font: 17px/1.7 Inter, system-ui, -apple-system, "Segoe UI", sans-serif; }
+code, pre { font-family: "JetBrains Mono", ui-monospace, Menlo, monospace; }
+a { color: var(--accent); }
+.wrap { max-width: 760px; margin: 0 auto; padding: 48px 24px 96px; }
+.eyebrow { display: inline-block; font-size: 13px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase;
+  color: var(--accent); background: var(--accent-soft); padding: 4px 10px; border-radius: 999px; margin-bottom: 16px; }
+h1 { font-size: 2.1em; line-height: 1.2; margin: 0 0 8px; }
+h2 { margin-top: 2.2em; padding-top: .4em; border-top: 1px solid var(--border); }
+h3 { margin-top: 1.6em; }
+blockquote { margin: 0 0 1.5em; padding: 10px 16px; border-left: 3px solid var(--accent); background: var(--accent-soft); border-radius: 0 8px 8px 0; color: var(--muted); }
+blockquote p { margin: 0; }
+p, li { color: var(--text); }
+table { border-collapse: collapse; width: 100%; margin: 1.2em 0; font-size: .95em; }
+th, td { border: 1px solid var(--border); padding: 8px 12px; text-align: left; }
+th { background: var(--bg-soft); }
+code { background: var(--code-bg); padding: .15em .4em; border-radius: 5px; font-size: .9em; }
+pre { background: var(--code-bg); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; overflow-x: auto; }
+pre code { background: none; padding: 0; }
+details { background: var(--bg-soft); border: 1px solid var(--border); border-radius: 8px; padding: 10px 14px; margin: .5em 0 1em; }
+summary { cursor: pointer; font-weight: 600; color: var(--accent); }
+hr { border: none; border-top: 1px solid var(--border); margin: 2.5em 0; }
+.footer-links { margin-top: 3em; padding-top: 1.5em; border-top: 1px solid var(--border); color: var(--muted); font-size: .95em; }
+.badge-row { display:flex; gap:8px; flex-wrap:wrap; margin-bottom: 24px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+<a class="hub-link" href="./" style="display:inline-block;margin:0 0 14px;font-size:14px">← 101 primers</a> · <a class="hub-link" href="../" style="font-size:14px">All readings</a>
+<span class="eyebrow">101 · Agents SDK</span>
+<h1>Testing &amp; Evals 101 — OpenAI Agents SDK</h1>
+<blockquote>
+<p>A quick, standalone primer. This repo&#39;s only quality check today is the hand-rolled eval script sketched in <code>guides/09-hardening-next-steps.md</code> (in the agentic-ai course) (&quot;Evals: measure, don&#39;t guess&quot;) — there&#39;s no test suite around <code>apps/chat/src/agent.ts</code> at all. This guide covers the SDK&#39;s own testing tools, and draws a hard line between two things people conflate.</p>
+</blockquote>
+<h2>Two different questions, two different tools</h2>
+<table>
+<thead>
+<tr>
+<th></th>
+<th><strong>Testing</strong> (this guide)</th>
+<th><strong>Evals</strong> (guide 09)</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Question it answers</td>
+<td>&quot;Does my code call the right tools, handle errors, and wire things together correctly?&quot;</td>
+<td>&quot;Is the model&#39;s output actually <em>good</em> — correct, on-topic, well-cited?&quot;</td>
+</tr>
+<tr>
+<td>How</td>
+<td>Deterministic, in-memory test doubles — no real model call</td>
+<td>Run real prompts against a real model, score the answers</td>
+</tr>
+<tr>
+<td>Speed / cost</td>
+<td>Fast, free, runs in CI</td>
+<td>Slow(er), costs tokens</td>
+</tr>
+<tr>
+<td>What it can&#39;t tell you</td>
+<td>Whether the model is <em>good at the task</em></td>
+<td>Whether your code&#39;s plumbing is correct</td>
+</tr>
+</tbody></table>
+<p>The Agents SDK&#39;s testing utilities are squarely the left column. If you&#39;ve been thinking &quot;I&#39;ll just write unit tests to check my agent gives good answers&quot; — that&#39;s actually an eval, not a test, and the two need different tools.</p>
+<h2>Setup: make sure tests don&#39;t call real tracing</h2>
+<p>Tracing is separate from the test doubles below and can still try to export spans during a test run. Disable it with any one of:</p>
+<pre><code class="language-ts">new Runner({ tracingDisabled: true });
+// or
+process.env.NODE_ENV = &quot;test&quot;;
+// or
+process.env.OPENAI_AGENTS_DISABLE_TRACING = &quot;1&quot;;
+// or
+import { setTracingDisabled } from &quot;@openai/agents&quot;;
+setTracingDisabled(true);
+</code></pre>
+<p>Import the test doubles from <code>@openai/agents/testing</code> (agents + sandbox) and <code>@openai/agents/realtime/testing</code> (voice).</p>
+<h2>Scripting a fake model: <code>ScriptedModel</code></h2>
+<p>Instead of hitting a real LLM, you script an ordered list of steps — one per expected model call:</p>
+<pre><code class="language-ts">import { Agent, run } from &quot;@openai/agents&quot;;
+import { ScriptedModel, assistantMessage, functionCall } from &quot;@openai/agents/testing&quot;;
+
+const model = new ScriptedModel([
+  functionCall(&quot;get_weather&quot;, { city: &quot;Chennai&quot; }, { callId: &quot;call_1&quot; }),
+  assistantMessage(&quot;It&#39;s 32°C and humid in Chennai.&quot;),
+]);
+
+const agent = new Agent({ name: &quot;Weather bot&quot;, model, tools: [getWeatherTool] });
+const result = await run(agent, &quot;What&#39;s the weather in Chennai?&quot;);
+
+model.assertComplete(); // fails if any scripted step was left unused
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Step builder</th>
+<th>Does</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>assistantMessage(text)</code></td>
+<td>Model returns a fixed final answer</td>
+</tr>
+<tr>
+<td><code>functionCall(name, args, { callId })</code></td>
+<td>Model calls a tool — the <strong>real</strong> tool pipeline still runs (validation, hooks, guardrails), only the <em>model&#39;s decision</em> is scripted</td>
+</tr>
+<tr>
+<td><code>modelResponder(fn)</code></td>
+<td>Pick a response based on the actual request — use only when behavior genuinely depends on it</td>
+</tr>
+<tr>
+<td><code>modelError(error, retryAdvice?)</code></td>
+<td>Fail one call (a retry consumes the <em>next</em> scripted step)</td>
+</tr>
+<tr>
+<td><code>modelStream(events)</code></td>
+<td>Script an exact streamed sequence</td>
+</tr>
+</tbody></table>
+<p>The key design choice: <strong>tools are never bypassed.</strong> Scripting <code>functionCall</code> only fakes the model&#39;s <em>decision</em> to call a tool — your actual <code>execute</code> function, its zod validation, and any guardrails still run for real. That&#39;s what makes this a test of your <em>wiring</em>, not a mock of your own logic.</p>
+<h2>Assertions</h2>
+<pre><code class="language-ts">model.calls;              // every call made, each with { index, streamed, request }
+model.firstCall;
+model.lastCall;
+model.remainingSteps;     // steps not yet consumed
+model.assertComplete();   // call this at the end of every test
+</code></pre>
+<p><code>request</code> on a call gives you <code>request.input</code>, <code>request.tools</code>, <code>request.modelSettings</code> — so you can assert, for example, &quot;the model was offered exactly these three tools&quot; or &quot;the conversation history sent on turn 2 included the tool result from turn 1.&quot;</p>
+<p>If something goes wrong, the SDK throws specific error types (<code>UnexpectedModelCallError</code>, <code>UnconsumedModelStepsError</code>, <code>InvalidScriptedModelStepError</code>, <code>ScriptedModelRequestAbortedError</code>), each with structured fields like <code>callIndex</code> and <code>remainingSteps</code>. Assert on those fields directly rather than string-matching the error message.</p>
+<h2>Scripting a sandbox session</h2>
+<p>If you&#39;re testing a <a href="sandbox-agents-101.html"><code>SandboxAgent</code></a>, you don&#39;t need a real sandbox to spin up:</p>
+<pre><code class="language-ts">import { scriptedSandboxSession } from &quot;@openai/agents/testing&quot;;
+
+const session = scriptedSandboxSession([
+  { method: &quot;execCommand&quot;, match: (cmd) =&gt; cmd.includes(&quot;npm test&quot;), result: { stdout: &quot;5 passed&quot;, exitCode: 0 } },
+]);
+
+await run(agent, &quot;Run the tests.&quot;, { sandbox: { session } });
+session.assertComplete();
+</code></pre>
+<p>Only methods you&#39;ve scripted are exposed — this preserves capability detection (the agent still sees a realistic, if minimal, sandbox surface) while keeping the test deterministic and free.</p>
+<h2>Scripting a Realtime (voice) session</h2>
+<p>For <a href="voice-agents-101.html">voice agents</a>, <code>ScriptedRealtimeTransport</code> plugs into a <strong>real</strong> <code>RealtimeSession</code> — tool calls still go through the real <code>RealtimeAgent</code> tools, same principle as <code>ScriptedModel</code>:</p>
+<pre><code class="language-ts">import { runScenario, expectCall, emit } from &quot;@openai/agents/realtime/testing&quot;;
+
+await runScenario({
+  scenario: [
+    expectCall(&quot;connect&quot;),
+    emit(&quot;function_call&quot;, { name: &quot;get_weather&quot;, args: { city: &quot;Chennai&quot; } }),
+    expectCall(&quot;sendFunctionCallOutput&quot;),
+  ],
+  exercise: async (transport) =&gt; {
+    const session = new RealtimeSession(agent, { transport });
+    await session.connect({ apiKey: &quot;ek_test&quot; });
+  },
+});
+</code></pre>
+<p><code>expectCall</code> asserts outbound calls happen in order (<code>connect</code>, <code>sendMessage</code>, <code>interrupt</code>, <code>close</code>, …); <code>emit</code> delivers inbound events (<code>function_call</code>, <code>audio</code>, <code>audio_interrupted</code>, …); <code>failNextCall</code> injects a failure into the next matching call; <code>disconnect</code> simulates the remote end hanging up. Finish with <code>transport.assertComplete()</code> and <code>transport.assertClosed()</code>.</p>
+<h2>What this testing layer deliberately does <em>not</em> cover</h2>
+<p>Straight from the SDK&#39;s own scope statement — don&#39;t reach for these test doubles to check:</p>
+<ul>
+<li><strong>Model or tool-selection quality</strong> — &quot;did the model pick a good tool / give a good answer&quot; is an eval question (see guide 09), not a test question.</li>
+<li><strong>Provider wire format</strong> — exact HTTP/WebSocket payloads; use the real adapter against a mocked network if you need that.</li>
+<li><strong>Sandbox provider isolation</strong> — whether Docker/hosted isolation actually holds; that&#39;s an integration test against the real provider.</li>
+<li><strong>Raw Realtime server frames or audio</strong> — the scripted transport works at the event level, not raw bytes.</li>
+</ul>
+<h2>Common mistakes</h2>
+<ul>
+<li><strong>Forgetting <code>model.assertComplete()</code></strong> — without it, a test can silently pass while leaving scripted steps (and the behavior they were meant to verify) unexercised.</li>
+<li><strong>Treating a passing test suite as proof the agent &quot;works well.&quot;</strong> It proves your code&#39;s plumbing is correct for the scenarios you scripted — it says nothing about whether the model&#39;s actual judgment is good. That&#39;s what guide 09&#39;s eval set is for.</li>
+<li><strong>Not disabling tracing in CI</strong>, causing slow or flaky exports during test runs.</li>
+<li><strong>Trying to mock tool <code>execute</code> functions directly</strong> instead of using <code>functionCall()</code> — you&#39;d lose coverage of your own validation/guardrail wiring, which is the main thing worth testing.</li>
+</ul>
+<h2>Check your understanding</h2>
+<ol>
+<li>If <code>ScriptedModel</code> is told to make a <code>functionCall</code>, does your tool&#39;s real <code>execute</code> function run, or is that mocked too?<details><summary>Answer</summary>It runs for real — only the model's decision to call that tool is scripted. Validation, hooks, and guardrails all execute normally, which is what makes this a test of your integration code rather than a mock of your own logic.</details></li>
+<li>Your CI suite is green. Does that tell you the agent gives good answers to real user questions?<details><summary>Answer</summary>No — it tells you the code paths you scripted behave as wired (right tools called, right data flows through). Answer quality is an evals question, answered by running real prompts against a real model and scoring the results, as in guide 09's eval script.</details></li>
+<li>Why does the SDK recommend asserting on structured fields like <code>callIndex</code> on a thrown error, rather than matching the error&#39;s message string?<details><summary>Answer</summary>Structured fields are stable and precise; message text can change between SDK versions and is easy to match too loosely or too strictly. Asserting on `callIndex`/`remainingSteps` directly ties your test to the actual failure, not to incidental wording.</details></li>
+</ol>
+<h2>Next steps</h2>
+<ul>
+<li>This repo&#39;s answer-quality eval script: <code>guides/09-hardening-next-steps.md</code> (in the agentic-ai course), &quot;Evals: measure, don&#39;t guess&quot;.</li>
+<li>Testing a paused, approval-gated tool call combines naturally with <code>functionCall()</code> scripting: <a href="human-in-the-loop-101.html"><code>human-in-the-loop-101.md</code></a>.</li>
+<li>Official docs: openai.github.io/openai-agents-js/guides/testing</li>
+</ul>
+<p class="footer-links">Part of the <strong>Agentic AI on Azure</strong> course repo · also available as plain Markdown (<code>guides/101/</code>) and in the interactive study site (<code>npm run study</code>).</p>
+</div>
+<script>hljs.highlightAll();</script>
+</body>
+</html>

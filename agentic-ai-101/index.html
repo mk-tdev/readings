@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>101 Primers</title>
+<title>Agentic AI 101s</title>
 <meta name="description" content="Short, standalone primers on MCP, Azure OpenAI and Azure AI Search.">
 <style>
 :root{--bg:#fbfaf7;--fg:#1f2a24;--muted:#5b6b62;--line:#dfe3dc;--accent:#2f6b4f;--soft:#eef3ee;--card:#ffffff}
@@ -21,28 +21,64 @@ h1{font-size:clamp(28px,5vw,38px);line-height:1.15;margin:16px 0 8px;letter-spac
 .card p{margin:0;color:var(--muted);font-size:15px}
 .links{margin-top:auto;font-size:13px;color:var(--muted)}
 .links a{color:var(--accent)}
+.group{font-size:13px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin:30px 0 12px}
 </style>
 </head>
 <body>
 <main>
   <a class="back" href="../">← All readings</a>
-  <h1>101 Primers</h1>
-  <p class="lead">Short, standalone five-minute primers on the core technologies behind agentic AI on Azure. Read one before the full hands-on guides.</p>
+  <h1>Agentic AI 101s</h1>
+  <p class="lead">Short, standalone primers on the technologies behind agentic AI on Azure, plus a roadmap that tells you what to read in which order. Each primer is the five-minute version before the full hands-on guides.</p>
+
+  <h2 class="group">Start here</h2>
+  <div class="grid">
+    <a class="card" href="agents-sdk-roadmap.html">
+      <h2>OpenAI Agents SDK: Beginner → Mastery Roadmap</h2>
+      <p>The reading order from core to advanced, and what to build at each stage.</p>
+    </a>
+  </div>
+
+  <h2 class="group">Platform &amp; protocols</h2>
   <div class="grid">
     <a class="card" href="mcp-101.html">
       <h2>MCP 101</h2>
       <p>Model Context Protocol from zero: hosts, clients and servers; tools, resources and prompts; transports; building and testing a server.</p>
-      <span class="links">HTML · <span>Markdown: mcp-101.md</span></span>
     </a>
     <a class="card" href="azure-openai-101.html">
       <h2>Azure OpenAI 101</h2>
       <p>Resources, deployments and models; the v1 endpoint; API keys vs Entra ID; quotas and tokens per minute.</p>
-      <span class="links">HTML · <span>Markdown: azure-openai-101.md</span></span>
     </a>
     <a class="card" href="azure-ai-search-101.html">
       <h2>Azure AI Search 101</h2>
       <p>Indexes and fields, BM25 keyword search, vector search, hybrid search with RRF, and the semantic ranker.</p>
-      <span class="links">HTML · <span>Markdown: azure-ai-search-101.md</span></span>
+    </a>
+    <a class="card" href="grpc-101.html">
+      <h2>gRPC 101</h2>
+      <p>A common RPC framework: Protocol Buffers, streaming, and how it compares with MCP&#39;s JSON-RPC over HTTP.</p>
+    </a>
+  </div>
+
+  <h2 class="group">OpenAI Agents SDK features</h2>
+  <div class="grid">
+    <a class="card" href="context-management-101.html">
+      <h2>Context Management 101</h2>
+      <p>RunContext: passing per-run data to tools and instructions without sending it to the model.</p>
+    </a>
+    <a class="card" href="human-in-the-loop-101.html">
+      <h2>Human-in-the-Loop 101</h2>
+      <p>Tool approval: pausing a run for a person to approve, and resuming from saved RunState.</p>
+    </a>
+    <a class="card" href="sandbox-agents-101.html">
+      <h2>Sandbox Agents 101</h2>
+      <p>Agents that run commands and edit files in an isolated sandbox, and when you need one.</p>
+    </a>
+    <a class="card" href="voice-agents-101.html">
+      <h2>Voice Agents 101</h2>
+      <p>Realtime voice: how voice agents differ from text chat streamed over SSE.</p>
+    </a>
+    <a class="card" href="testing-evals-101.html">
+      <h2>Testing &amp; Evals 101</h2>
+      <p>Measuring agent quality: test cases, evals and how to catch regressions.</p>
     </a>
   </div>
 </main>

@@ -1,0 +1,260 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>gRPC 101 · Agentic AI on Azure</title>
+<meta name="description" content="A quick primer on gRPC: protobuf, HTTP/2, the four RPC shapes, and how it compares to REST and JSON-RPC." />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/styles/github.min.css" media="(prefers-color-scheme: light)" id="hl-light" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/styles/github-dark.min.css" media="(prefers-color-scheme: dark)" id="hl-dark" />
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/highlight.min.js"></script>
+<style>
+:root { --bg:#ffffff; --bg-soft:#f6f8fa; --text:#1f2328; --muted:#59636e; --border:#d1d9e0;
+  --accent:#2563eb; --accent-soft:#e8f0fe; --code-bg:#f3f4f6; }
+@media (prefers-color-scheme: dark) {
+  :root { --bg:#0d1117; --bg-soft:#151b23; --text:#e6edf3; --muted:#9198a1; --border:#2f3742;
+    --accent:#4c8dff; --accent-soft:#172440; --code-bg:#1b2129; }
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--bg); color: var(--text); }
+body { font: 17px/1.7 Inter, system-ui, -apple-system, "Segoe UI", sans-serif; }
+code, pre { font-family: "JetBrains Mono", ui-monospace, Menlo, monospace; }
+a { color: var(--accent); }
+.wrap { max-width: 760px; margin: 0 auto; padding: 48px 24px 96px; }
+.eyebrow { display: inline-block; font-size: 13px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase;
+  color: var(--accent); background: var(--accent-soft); padding: 4px 10px; border-radius: 999px; margin-bottom: 16px; }
+h1 { font-size: 2.1em; line-height: 1.2; margin: 0 0 8px; }
+h2 { margin-top: 2.2em; padding-top: .4em; border-top: 1px solid var(--border); }
+h3 { margin-top: 1.6em; }
+blockquote { margin: 0 0 1.5em; padding: 10px 16px; border-left: 3px solid var(--accent); background: var(--accent-soft); border-radius: 0 8px 8px 0; color: var(--muted); }
+blockquote p { margin: 0; }
+p, li { color: var(--text); }
+table { border-collapse: collapse; width: 100%; margin: 1.2em 0; font-size: .95em; }
+th, td { border: 1px solid var(--border); padding: 8px 12px; text-align: left; }
+th { background: var(--bg-soft); }
+code { background: var(--code-bg); padding: .15em .4em; border-radius: 5px; font-size: .9em; }
+pre { background: var(--code-bg); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; overflow-x: auto; }
+pre code { background: none; padding: 0; }
+details { background: var(--bg-soft); border: 1px solid var(--border); border-radius: 8px; padding: 10px 14px; margin: .5em 0 1em; }
+summary { cursor: pointer; font-weight: 600; color: var(--accent); }
+hr { border: none; border-top: 1px solid var(--border); margin: 2.5em 0; }
+.footer-links { margin-top: 3em; padding-top: 1.5em; border-top: 1px solid var(--border); color: var(--muted); font-size: .95em; }
+.badge-row { display:flex; gap:8px; flex-wrap:wrap; margin-bottom: 24px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+<a class="hub-link" href="./" style="display:inline-block;margin:0 0 14px;font-size:14px">← 101 primers</a> · <a class="hub-link" href="../" style="font-size:14px">All readings</a>
+<span class="eyebrow">101 · gRPC</span>
+<h1>gRPC 101 — from zero</h1>
+<blockquote>
+<p>A quick, standalone primer. This repo doesn&#39;t use gRPC anywhere (its MCP servers use JSON-RPC over HTTP instead — see <a href="mcp-101.html"><code>mcp-101.md</code></a>), but it&#39;s one of the most common RPC frameworks you&#39;ll meet in real backend systems, and worth knowing for contrast.</p>
+</blockquote>
+<h2>What it is</h2>
+<p><strong>gRPC</strong> (&quot;gRPC Remote Procedure Call&quot;) is an open-source RPC framework originally built at Google, now a CNCF project. Instead of calling a URL and parsing JSON, you call a <strong>method on a service</strong> almost as if it were a local function — the framework handles serializing the call, sending it over the network, and deserializing the response.</p>
+<pre><code class="language-ts">// feels like calling a local function…
+const response = await client.getUser({ id: &quot;42&quot; });
+// …but it&#39;s actually a network call to another service
+</code></pre>
+<p>Three things make gRPC distinctive compared to a typical REST+JSON API:</p>
+<ol>
+<li><strong>Protocol Buffers (&quot;protobuf&quot;)</strong> — a compact binary format for messages, generated from a schema.</li>
+<li><strong>HTTP/2</strong> as the transport — multiplexed streams, header compression, real bidirectional streaming.</li>
+<li><strong>Strongly-typed contracts</strong> — the same <code>.proto</code> file generates client and server code in many languages, so both sides agree on the shape of every call at compile time.</li>
+</ol>
+<h2>The core artifact: the <code>.proto</code> file</h2>
+<p>Everything starts with a schema file written in Protocol Buffers&#39; interface definition language:</p>
+<pre><code class="language-protobuf">syntax = &quot;proto3&quot;;
+
+package users;
+
+service UserService {
+  rpc GetUser (GetUserRequest) returns (User);
+  rpc ListUsers (ListUsersRequest) returns (stream User); // server streaming
+}
+
+message GetUserRequest {
+  string id = 1;
+}
+
+message User {
+  string id = 1;
+  string name = 2;
+  string email = 3;
+}
+
+message ListUsersRequest {
+  int32 page_size = 1;
+}
+</code></pre>
+<p>A compiler (<code>protoc</code>, or a language-specific plugin) turns this one file into:</p>
+<ul>
+<li><strong>Server stub</strong> — base classes/interfaces you implement with your actual business logic.</li>
+<li><strong>Client stub</strong> — a typed client your application code calls directly, with no manual URL-building or JSON parsing.</li>
+<li><strong>Message classes</strong> — typed objects for <code>User</code>, <code>GetUserRequest</code>, etc., with built-in binary (de)serialization.</li>
+</ul>
+<p>The numbers after each field (<code>= 1</code>, <code>= 2</code>, …) aren&#39;t display order — they&#39;re the <strong>wire tags</strong> protobuf uses to identify fields in the binary encoding. This is also how protobuf achieves safe schema evolution: you can add new fields with new numbers without breaking old clients, but you must never reuse a retired field&#39;s number.</p>
+<h2>Why binary + HTTP/2 instead of JSON + HTTP/1.1</h2>
+<table>
+<thead>
+<tr>
+<th></th>
+<th>REST + JSON</th>
+<th>gRPC</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Payload</td>
+<td>Text (JSON) — human-readable, larger</td>
+<td>Binary (protobuf) — compact, faster to parse</td>
+</tr>
+<tr>
+<td>Transport</td>
+<td>Usually HTTP/1.1 (one request waits for one response per connection, or pipelining workarounds)</td>
+<td>HTTP/2 (many concurrent streams over one connection)</td>
+</tr>
+<tr>
+<td>Contract</td>
+<td>Often informal (an OpenAPI spec, if you&#39;re disciplined)</td>
+<td>Enforced by the <code>.proto</code> file; client and server are generated from the same source of truth</td>
+</tr>
+<tr>
+<td>Streaming</td>
+<td>Awkward (long polling, SSE, WebSockets bolted on)</td>
+<td>Native: server streaming, client streaming, and bidirectional streaming are all first-class RPC shapes</td>
+</tr>
+<tr>
+<td>Browser support</td>
+<td>Universal</td>
+<td>Needs a proxy (gRPC-Web) — browsers can&#39;t speak raw HTTP/2 trailers the way gRPC needs</td>
+</tr>
+<tr>
+<td>Human debugging</td>
+<td><code>curl</code> + readable JSON</td>
+<td>Needs a gRPC-aware tool (<code>grpcurl</code>, <code>buf curl</code>, Postman&#39;s gRPC support) since payloads are binary</td>
+</tr>
+</tbody></table>
+<p>The trade-off is debuggability and reach (anyone with a browser can call a REST API) versus speed and type safety (gRPC is built for service-to-service traffic inside a trusted network, not for public-facing browser APIs).</p>
+<h2>The four call shapes</h2>
+<p>This is the part REST can&#39;t do natively:</p>
+<table>
+<thead>
+<tr>
+<th>Shape</th>
+<th>Direction</th>
+<th>Example</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>Unary</strong></td>
+<td>one request → one response</td>
+<td><code>GetUser(id)</code> → <code>User</code></td>
+</tr>
+<tr>
+<td><strong>Server streaming</strong></td>
+<td>one request → a stream of responses</td>
+<td><code>ListUsers()</code> → stream of <code>User</code> as they&#39;re found</td>
+</tr>
+<tr>
+<td><strong>Client streaming</strong></td>
+<td>a stream of requests → one response</td>
+<td>upload chunks of a file → one &quot;upload complete&quot; response</td>
+</tr>
+<tr>
+<td><strong>Bidirectional streaming</strong></td>
+<td>both sides stream independently</td>
+<td>a live chat, or a long-running negotiation between two services</td>
+</tr>
+</tbody></table>
+<p>All four reuse the same HTTP/2 connection — streams are multiplexed, so a slow streaming call doesn&#39;t block other calls on the same connection the way it might over HTTP/1.1.</p>
+<h2>A minimal server (Node.js, <code>@grpc/grpc-js</code>)</h2>
+<pre><code class="language-ts">import * as grpc from &quot;@grpc/grpc-js&quot;;
+import * as protoLoader from &quot;@grpc/proto-loader&quot;;
+
+const packageDef = protoLoader.loadSync(&quot;users.proto&quot;);
+const proto = grpc.loadPackageDefinition(packageDef) as any;
+
+const server = new grpc.Server();
+server.addService(proto.users.UserService.service, {
+  getUser: (call, callback) =&gt; {
+    const { id } = call.request;
+    callback(null, { id, name: &quot;Ada Lovelace&quot;, email: &quot;ada@example.com&quot; });
+  },
+});
+server.bindAsync(&quot;0.0.0.0:50051&quot;, grpc.ServerCredentials.createInsecure(), () =&gt; server.start());
+</code></pre>
+<pre><code class="language-ts">// client
+const client = new proto.users.UserService(&quot;localhost:50051&quot;, grpc.credentials.createInsecure());
+client.getUser({ id: &quot;42&quot; }, (err, user) =&gt; console.log(user));
+</code></pre>
+<p>Notice there&#39;s no manual JSON parsing, no hand-written URL path, and no REST verb to pick — just a method call with a typed argument.</p>
+<h2>gRPC vs MCP&#39;s JSON-RPC</h2>
+<p>Both are RPC-style protocols, but built for different jobs:</p>
+<table>
+<thead>
+<tr>
+<th></th>
+<th>gRPC</th>
+<th>MCP (JSON-RPC over HTTP)</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Built for</td>
+<td>service-to-service calls inside a backend</td>
+<td>giving an LLM host access to tools/resources</td>
+</tr>
+<tr>
+<td>Payload</td>
+<td>binary (protobuf)</td>
+<td>JSON (human-readable, easy to log and debug)</td>
+</tr>
+<tr>
+<td>Schema</td>
+<td><code>.proto</code> compiled ahead of time</td>
+<td>JSON Schema, discovered at runtime via <code>tools/list</code></td>
+</tr>
+<tr>
+<td>Typical consumer</td>
+<td>another backend service, same team/org</td>
+<td>an AI model deciding dynamically what to call</td>
+</tr>
+</tbody></table>
+<p>MCP chose JSON-RPC precisely because its &quot;client&quot; (the model) needs to discover capabilities at runtime and the payloads benefit from being human-readable for debugging and for the model itself to reason about — gRPC&#39;s ahead-of-time compiled, binary approach optimizes for a different goal: raw throughput between services whose contracts are fixed at build time. See <a href="mcp-101.html"><code>mcp-101.md</code></a> for the full MCP picture.</p>
+<h2>When to reach for gRPC</h2>
+<p>Good fit:</p>
+<ul>
+<li>Internal microservice-to-microservice calls where both ends are services you control.</li>
+<li>High request volume where binary encoding and HTTP/2 multiplexing meaningfully cut latency/CPU.</li>
+<li>You need real streaming (e.g. a service pushing live updates to another service).</li>
+</ul>
+<p>Less of a fit:</p>
+<ul>
+<li>Public APIs consumed directly by browsers (needs a gRPC-Web proxy, extra infrastructure).</li>
+<li>APIs where human-readability/debuggability with plain <code>curl</code> matters more than raw performance.</li>
+<li>Simple CRUD APIs with low traffic, where REST&#39;s simplicity and ubiquity win.</li>
+</ul>
+<h2>Common mistakes</h2>
+<ul>
+<li><strong>Reusing or renumbering protobuf field tags</strong> after a message has shipped — this silently corrupts data for clients still using the old schema.</li>
+<li><strong>Expecting a browser to call gRPC directly</strong> — you need gRPC-Web (or REST-to-gRPC gateway) in between.</li>
+<li><strong>Treating gRPC errors like HTTP status codes</strong> — gRPC has its own status code set (<code>NOT_FOUND</code>, <code>UNAVAILABLE</code>, <code>DEADLINE_EXCEEDED</code>, …) carried in trailers, not a simple top-level HTTP status.</li>
+<li><strong>Skipping deadlines</strong> — gRPC calls should set a deadline/timeout explicitly; without one, a slow downstream service can hang a call indefinitely.</li>
+</ul>
+<h2>Check your understanding</h2>
+<ol>
+<li>Why can gRPC do bidirectional streaming natively while REST needs WebSockets or SSE bolted on?<details><summary>Answer</summary>gRPC runs over HTTP/2, which supports multiple concurrent, independent streams over a single connection — streaming is part of the core RPC model. REST is built around the one-request/one-response HTTP/1.1 model, so continuous two-way communication has to be added separately.</details></li>
+<li>What do the numbers in <code>string id = 1;</code> inside a <code>.proto</code> message actually mean?<details><summary>Answer</summary>They're wire tags used to identify each field in the compact binary encoding — not display order. They must stay stable and unique over a message's lifetime so old and new clients can still read each other's messages.</details></li>
+<li>Why might you choose JSON-RPC (as MCP does) over gRPC for letting an LLM call tools?<details><summary>Answer</summary>JSON is human-readable, easy to log/debug, and lets the model's host discover tool schemas dynamically at runtime (`tools/list`) rather than requiring a pre-compiled, ahead-of-time schema like a `.proto` file.</details></li>
+</ol>
+<h2>Next steps</h2>
+<ul>
+<li>Compare with this repo&#39;s actual RPC protocol: <a href="mcp-101.html"><code>mcp-101.md</code></a> and the hands-on <code>guides/04-mcp.md</code> (in the agentic-ai course).</li>
+<li>Official docs: grpc.io</li>
+</ul>
+<p class="footer-links">Part of the <strong>Agentic AI on Azure</strong> course repo · also available as plain Markdown (<code>guides/101/</code>) and in the interactive study site (<code>npm run study</code>).</p>
+</div>
+<script>hljs.highlightAll();</script>
+</body>
+</html>

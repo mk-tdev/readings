@@ -1,0 +1,194 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Context Management 101 · Agentic AI on Azure</title>
+<meta name="description" content="A quick primer on the OpenAI Agents SDK's RunContext: local context vs LLM-visible context, and why isEnabled isn't a security boundary." />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/styles/github.min.css" media="(prefers-color-scheme: light)" id="hl-light" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/styles/github-dark.min.css" media="(prefers-color-scheme: dark)" id="hl-dark" />
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/highlight.min.js"></script>
+<style>
+:root { --bg:#ffffff; --bg-soft:#f6f8fa; --text:#1f2328; --muted:#59636e; --border:#d1d9e0;
+  --accent:#2563eb; --accent-soft:#e8f0fe; --code-bg:#f3f4f6; }
+@media (prefers-color-scheme: dark) {
+  :root { --bg:#0d1117; --bg-soft:#151b23; --text:#e6edf3; --muted:#9198a1; --border:#2f3742;
+    --accent:#4c8dff; --accent-soft:#172440; --code-bg:#1b2129; }
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--bg); color: var(--text); }
+body { font: 17px/1.7 Inter, system-ui, -apple-system, "Segoe UI", sans-serif; }
+code, pre { font-family: "JetBrains Mono", ui-monospace, Menlo, monospace; }
+a { color: var(--accent); }
+.wrap { max-width: 760px; margin: 0 auto; padding: 48px 24px 96px; }
+.eyebrow { display: inline-block; font-size: 13px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase;
+  color: var(--accent); background: var(--accent-soft); padding: 4px 10px; border-radius: 999px; margin-bottom: 16px; }
+h1 { font-size: 2.1em; line-height: 1.2; margin: 0 0 8px; }
+h2 { margin-top: 2.2em; padding-top: .4em; border-top: 1px solid var(--border); }
+h3 { margin-top: 1.6em; }
+blockquote { margin: 0 0 1.5em; padding: 10px 16px; border-left: 3px solid var(--accent); background: var(--accent-soft); border-radius: 0 8px 8px 0; color: var(--muted); }
+blockquote p { margin: 0; }
+p, li { color: var(--text); }
+table { border-collapse: collapse; width: 100%; margin: 1.2em 0; font-size: .95em; }
+th, td { border: 1px solid var(--border); padding: 8px 12px; text-align: left; }
+th { background: var(--bg-soft); }
+code { background: var(--code-bg); padding: .15em .4em; border-radius: 5px; font-size: .9em; }
+pre { background: var(--code-bg); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; overflow-x: auto; }
+pre code { background: none; padding: 0; }
+details { background: var(--bg-soft); border: 1px solid var(--border); border-radius: 8px; padding: 10px 14px; margin: .5em 0 1em; }
+summary { cursor: pointer; font-weight: 600; color: var(--accent); }
+hr { border: none; border-top: 1px solid var(--border); margin: 2.5em 0; }
+.footer-links { margin-top: 3em; padding-top: 1.5em; border-top: 1px solid var(--border); color: var(--muted); font-size: .95em; }
+.badge-row { display:flex; gap:8px; flex-wrap:wrap; margin-bottom: 24px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+<a class="hub-link" href="./" style="display:inline-block;margin:0 0 14px;font-size:14px">← 101 primers</a> · <a class="hub-link" href="../" style="font-size:14px">All readings</a>
+<span class="eyebrow">101 · Agents SDK</span>
+<h1>Context Management 101 — OpenAI Agents SDK</h1>
+<blockquote>
+<p>A quick, standalone primer on the Agents SDK&#39;s <code>RunContext</code>. This repo&#39;s chat app (<code>apps/chat/src/agent.ts</code>) doesn&#39;t currently use typed run context — tools there are stateless — so treat this as the natural next step once you&#39;ve worked through <code>guides/05-agents-sdk.md</code> (in the agentic-ai course).</p>
+</blockquote>
+<h2>Two things people call &quot;context&quot; — don&#39;t mix them up</h2>
+<p>The word &quot;context&quot; means two different things in the Agents SDK, and conflating them is the single most common source of confusion:</p>
+<table>
+<thead>
+<tr>
+<th></th>
+<th><strong>Local context</strong></th>
+<th><strong>LLM-visible context</strong></th>
+</tr>
+</thead>
+<tbody><tr>
+<td>What it is</td>
+<td>App-level data/dependencies your <em>code</em> can read</td>
+<td>What the <em>model</em> actually sees when it generates a response</td>
+</tr>
+<tr>
+<td>Lives where</td>
+<td>A plain object you create (<code>RunContext&lt;T&gt;</code>)</td>
+<td>The conversation history sent in the request</td>
+</tr>
+<tr>
+<td>Sent to the model?</td>
+<td><strong>Never</strong></td>
+<td>Yes — this is its whole job</td>
+</tr>
+<tr>
+<td>Typical use</td>
+<td>user id, a logger, a DB client, feature flags</td>
+<td>instructions, prior turns, tool results</td>
+</tr>
+</tbody></table>
+<h2>Local context: <code>RunContext&lt;T&gt;</code></h2>
+<p>You create an object to hold whatever your tools or hooks need, and pass it into the run:</p>
+<pre><code class="language-ts">import { Agent, run, tool } from &quot;@openai/agents&quot;;
+import { z } from &quot;zod&quot;;
+
+interface UserInfo {
+  name: string;
+  uid: number;
+}
+
+const fetchUserAge = tool({
+  name: &quot;fetch_user_age&quot;,
+  description: &quot;Return the current user&#39;s age.&quot;,
+  parameters: z.object({}),
+  execute: async (_args, runContext) =&gt; {
+    // runContext.context is YOUR typed object — never sent to the model
+    return `${runContext.context.name} is 47 years old.`;
+  },
+});
+
+const agent = new Agent&lt;UserInfo&gt;({
+  name: &quot;Assistant&quot;,
+  tools: [fetchUserAge],
+});
+
+const result = await run(agent, &quot;What is the age of the user?&quot;, {
+  context: { name: &quot;Ada&quot;, uid: 42 },
+});
+</code></pre>
+<p>Rules worth internalizing:</p>
+<ul>
+<li><strong>One context type per run.</strong> Every agent, tool, and hook involved in a single <code>run()</code> must agree on the same <code>T</code> in <code>RunContext&lt;T&gt;</code>.</li>
+<li><strong>It&#39;s for dependencies, not conversation.</strong> Think loggers, data fetchers, user ids, helper functions — not &quot;what the user said five turns ago.&quot; That&#39;s conversation history (<code>result.history</code>, a <code>session</code>, <code>conversationId</code>, or <code>previousResponseId</code>), which is a completely separate mechanism.</li>
+<li><strong>Nested runs share it.</strong> If an agent is used as a tool via <code>agent.asTool()</code>, the nested run shares the same app context, approval state, and usage tracking as the outer run — it does <strong>not</strong> get an isolated copy by default.</li>
+</ul>
+<h3>What else lives on <code>runContext</code></h3>
+<p>Besides your own <code>context</code>, the SDK attaches runtime metadata to the same object:</p>
+<table>
+<thead>
+<tr>
+<th>Property</th>
+<th>What it is</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>runContext.context</code></td>
+<td><strong>Your</strong> app-defined state — the only field you control</td>
+</tr>
+<tr>
+<td><code>runContext.usage</code></td>
+<td>Aggregated token/request usage for the run so far</td>
+</tr>
+<tr>
+<td><code>runContext.toolInput</code></td>
+<td>Structured input, when running inside <code>agent.asTool()</code></td>
+</tr>
+<tr>
+<td><code>runContext.approveTool(...)</code> / <code>.rejectTool(...)</code></td>
+<td>Programmatically resolve a pending tool approval (see the human-in-the-loop guide)</td>
+</tr>
+</tbody></table>
+<blockquote>
+<p><strong>Watch out:</strong> if you serialize <code>RunState</code> for a human-in-the-loop flow (pausing a run for approval), <em>all</em> of this — including your <code>context</code> object — gets written out. Don&#39;t put secrets in <code>runContext.context</code> if the state might be persisted or sent over the wire.</p>
+</blockquote>
+<h2><code>isEnabled</code> callbacks are visibility, not security</h2>
+<p>Function tools, handoffs, and MCP&#39;s <code>toolFilter</code> all accept an <code>isEnabled</code> predicate that receives the current <code>RunContext</code> and decides whether that capability is even shown to the model this turn:</p>
+<pre><code class="language-ts">const deleteNote = tool({
+  name: &quot;delete_note&quot;,
+  // ...
+  isEnabled: ({ runContext }) =&gt; runContext.context.role === &quot;admin&quot;,
+});
+</code></pre>
+<p>This is useful for cutting down the tool list per-request — but it runs <strong>before</strong> the model generates arguments, so it cannot validate <em>what</em> the model asks for, only <em>whether the tool is listed at all</em>. Two consequences:</p>
+<ul>
+<li><strong>Authorize inside <code>execute</code>, not just in <code>isEnabled</code>.</strong> If &quot;can this user delete notes&quot; matters, check it again inside the tool&#39;s handler (or use an input guardrail + approval), because a model could still be coerced into attempting a call if your <code>isEnabled</code> logic has a gap.</li>
+<li><strong>For handoffs with a typed <code>inputType</code></strong>, check the parsed input at the very start of <code>onHandoff</code> — before any side effects — and throw if it fails authorization. Tool input guardrails do not run for handoffs.</li>
+</ul>
+<h2>The LLM-visible side: four ways to get information to the model</h2>
+<p>The model only ever sees conversation history. To add more:</p>
+<ol>
+<li><strong>Agent <code>instructions</code></strong> — static string, or a function that receives the context and returns a string (useful for &quot;personalize the system prompt from <code>runContext.context</code>&quot; without exposing the raw object).</li>
+<li><strong><code>input</code> to <code>run()</code></strong> — similar to instructions but lower in the chain-of-command ordering.</li>
+<li><strong>Function tools</strong> — let the model <em>ask</em> for information on demand instead of pre-loading everything.</li>
+<li><strong>Retrieval / search tools</strong> — ground answers in files, a database, or the web (this is exactly what <code>search_knowledge</code> does in this repo&#39;s <code>mcp-servers/knowledge</code>).</li>
+</ol>
+<h2>Common mistakes</h2>
+<ul>
+<li><strong>Putting conversation state in <code>RunContext</code>.</strong> It&#39;s for dependencies/metadata, not &quot;what was said&quot; — use sessions/history for that (see <code>guides/05-agents-sdk.md</code> (in the agentic-ai course), &quot;Sessions (memory)&quot;).</li>
+<li><strong>Treating <code>isEnabled</code> as an authorization boundary.</strong> It filters what the model can see, not what a determined/injected prompt can attempt — the real check belongs inside the tool&#39;s <code>execute</code>.</li>
+<li><strong>Serializing secrets.</strong> Anything in <code>runContext.context</code> can end up in a persisted <code>RunState</code> if you build an approval flow — keep tokens/credentials out of it, or redact before persisting.</li>
+<li><strong>Assuming nested <code>agent.asTool()</code> runs get isolated state.</strong> They share the parent&#39;s app context and approval/usage tracking.</li>
+</ul>
+<h2>Check your understanding</h2>
+<ol>
+<li>If a tool needs the current user&#39;s id, should that id live in <code>RunContext</code> or in the conversation history?<details><summary>Answer</summary><code>RunContext</code> — it's app-level data your code needs, not something the model said or should see directly.</details></li>
+<li>Why can&#39;t an <code>isEnabled</code> predicate be your only authorization check for a destructive tool?<details><summary>Answer</summary>It only decides whether the tool is listed to the model before arguments are generated — it can't inspect or validate the arguments the model eventually produces. Re-check authorization inside <code>execute</code>, or use an input guardrail / approval step.</details></li>
+<li>What happens to your <code>runContext.context</code> object if you serialize <code>RunState</code> for a human-in-the-loop pause?<details><summary>Answer</summary>It gets written out as part of the serialized state, so secrets placed there would be persisted/transmitted too — keep sensitive values out of it.</details></li>
+</ol>
+<h2>Next steps</h2>
+<ul>
+<li>Pausing a run for approval also touches <code>RunContext</code> (<code>approveTool</code>/<code>rejectTool</code>) — see <a href="human-in-the-loop-101.html"><code>human-in-the-loop-101.md</code></a>.</li>
+<li>This repo&#39;s session/memory coverage: <code>guides/05-agents-sdk.md</code> (in the agentic-ai course) — &quot;Sessions (memory)&quot;.</li>
+<li>Official docs: openai.github.io/openai-agents-js/guides/context</li>
+</ul>
+<p class="footer-links">Part of the <strong>Agentic AI on Azure</strong> course repo · also available as plain Markdown (<code>guides/101/</code>) and in the interactive study site (<code>npm run study</code>).</p>
+</div>
+<script>hljs.highlightAll();</script>
+</body>
+</html>

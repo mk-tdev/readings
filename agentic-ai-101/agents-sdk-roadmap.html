@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Agents SDK Roadmap · Agentic AI on Azure</title>
+<meta name="description" content="A beginner-to-mastery learning path through this repo's OpenAI Agents SDK guides, with milestones at each phase." />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/styles/github.min.css" media="(prefers-color-scheme: light)" id="hl-light" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/styles/github-dark.min.css" media="(prefers-color-scheme: dark)" id="hl-dark" />
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/highlight.min.js"></script>
+<style>
+:root { --bg:#ffffff; --bg-soft:#f6f8fa; --text:#1f2328; --muted:#59636e; --border:#d1d9e0;
+  --accent:#2563eb; --accent-soft:#e8f0fe; --code-bg:#f3f4f6; }
+@media (prefers-color-scheme: dark) {
+  :root { --bg:#0d1117; --bg-soft:#151b23; --text:#e6edf3; --muted:#9198a1; --border:#2f3742;
+    --accent:#4c8dff; --accent-soft:#172440; --code-bg:#1b2129; }
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--bg); color: var(--text); }
+body { font: 17px/1.7 Inter, system-ui, -apple-system, "Segoe UI", sans-serif; }
+code, pre { font-family: "JetBrains Mono", ui-monospace, Menlo, monospace; }
+a { color: var(--accent); }
+.wrap { max-width: 760px; margin: 0 auto; padding: 48px 24px 96px; }
+.eyebrow { display: inline-block; font-size: 13px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase;
+  color: var(--accent); background: var(--accent-soft); padding: 4px 10px; border-radius: 999px; margin-bottom: 16px; }
+h1 { font-size: 2.1em; line-height: 1.2; margin: 0 0 8px; }
+h2 { margin-top: 2.2em; padding-top: .4em; border-top: 1px solid var(--border); }
+h3 { margin-top: 1.6em; }
+blockquote { margin: 0 0 1.5em; padding: 10px 16px; border-left: 3px solid var(--accent); background: var(--accent-soft); border-radius: 0 8px 8px 0; color: var(--muted); }
+blockquote p { margin: 0; }
+p, li { color: var(--text); }
+table { border-collapse: collapse; width: 100%; margin: 1.2em 0; font-size: .95em; }
+th, td { border: 1px solid var(--border); padding: 8px 12px; text-align: left; }
+th { background: var(--bg-soft); }
+code { background: var(--code-bg); padding: .15em .4em; border-radius: 5px; font-size: .9em; }
+pre { background: var(--code-bg); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; overflow-x: auto; }
+pre code { background: none; padding: 0; }
+details { background: var(--bg-soft); border: 1px solid var(--border); border-radius: 8px; padding: 10px 14px; margin: .5em 0 1em; }
+summary { cursor: pointer; font-weight: 600; color: var(--accent); }
+hr { border: none; border-top: 1px solid var(--border); margin: 2.5em 0; }
+.footer-links { margin-top: 3em; padding-top: 1.5em; border-top: 1px solid var(--border); color: var(--muted); font-size: .95em; }
+ul:has(> li > input[type="checkbox"]) { list-style: none; padding-left: 0; }
+li:has(> input[type="checkbox"]) { padding: 4px 0; }
+</style>
+</head>
+<body>
+<div class="wrap">
+<a class="hub-link" href="./" style="display:inline-block;margin:0 0 14px;font-size:14px">← 101 primers</a> · <a class="hub-link" href="../" style="font-size:14px">All readings</a>
+<span class="eyebrow">Learning path</span>
+<h1>OpenAI Agents SDK — Beginner to Mastery Roadmap</h1>
+<blockquote>
+<p>A learning path through this repo&#39;s existing guides, ordered core → advanced. It doesn&#39;t introduce new material — it tells you what order to read things in and what to actually build at each stage. Tick items as you go; the study site saves your progress.</p>
+</blockquote>
+<h2>How to use this</h2>
+<p>Each phase ends with a <strong>milestone</strong> — something you build or break on purpose, not just read. Reading without building gets you &quot;I recognize these words,&quot; not mastery. If a phase&#39;s milestone feels too easy, you&#39;re ready for the next one; if it feels impossible, go back one phase.</p>
+<h2>Phase 0 — Prerequisites (don&#39;t skip)</h2>
+<ul>
+<li><input disabled="" type="checkbox"> Comfortable with modern async TypeScript (if not: <code>guides/01-node-ts-refresher.md</code> (in the agentic-ai course))</li>
+<li><input disabled="" type="checkbox"> Hand-wrote a tool-calling loop <strong>without</strong> the Agents SDK — <code>guides/02-llm-fundamentals.md</code> (in the agentic-ai course), <code>playground/src/03-tool-calling-by-hand.ts</code></li>
+</ul>
+<p><strong>Why this matters:</strong> every SDK abstraction (<code>Agent</code>, <code>tool()</code>, the run loop) is a wrapper around the raw request/response cycle you build by hand here. Skip this and the SDK feels like magic; debugging it later means debugging magic.</p>
+<h2>Phase 1 — Core</h2>
+<ul>
+<li><input disabled="" type="checkbox"> The primitives: <code>Agent</code>, <code>run()</code>, the run loop — <code>guides/05-agents-sdk.md</code> (in the agentic-ai course), sections &quot;The primitives&quot; + &quot;The run loop&quot;</li>
+<li><input disabled="" type="checkbox"> The three kinds of tools (function, hosted, MCP) — same guide, &quot;Three kinds of tools&quot;</li>
+<li><input disabled="" type="checkbox"> Connecting to MCP servers — same guide, &quot;Connecting to MCP servers&quot;</li>
+<li><input disabled="" type="checkbox"> Streaming a run to a client — same guide, &quot;Streaming to the browser&quot;</li>
+<li><input disabled="" type="checkbox"> Sessions (memory across turns) — same guide, &quot;Sessions (memory)&quot;</li>
+<li><input disabled="" type="checkbox"> Guardrails — same guide, &quot;Guardrails&quot;</li>
+<li><input disabled="" type="checkbox"> Ran <code>npm run dev:all</code> and read <code>apps/chat/src/agent.ts</code> start to finish, matching every import to a concept above</li>
+</ul>
+<p><strong>Milestone:</strong> guide 05&#39;s exercises #4 (a &quot;Quiz Master&quot; agent with a handoff) and #5 (an agent used as a tool). If you can build both without copying the exercise text verbatim, you&#39;ve got the core.</p>
+<h2>Phase 2 — Intermediate: control and context</h2>
+<ul>
+<li><input disabled="" type="checkbox"> Handoffs vs agents-as-tools — when to use which, and why <code>Agent.create({...})</code> matters for <code>finalOutput</code> typing — <code>guides/05-agents-sdk.md</code> (in the agentic-ai course), &quot;Handoffs vs agents-as-tools&quot;</li>
+<li><input disabled="" type="checkbox"> <code>RunContext&lt;T&gt;</code> — local context vs LLM-visible context, and why <code>isEnabled</code> isn&#39;t a security boundary — <a href="context-management-101.html"><code>guides/101/context-management-101.md</code></a></li>
+<li><input disabled="" type="checkbox"> Tool approval: <code>needsApproval</code>, interruptions, resuming a paused run — <a href="human-in-the-loop-101.html"><code>guides/101/human-in-the-loop-101.md</code></a></li>
+<li><input disabled="" type="checkbox"> MCP in depth: JSON-RPC wire format, transports, stateless server design, security — <code>guides/04-mcp.md</code> (in the agentic-ai course) + <a href="mcp-101.html"><code>guides/101/mcp-101.md</code></a></li>
+<li><input disabled="" type="checkbox"> Provider plumbing: resource → deployment → model, API key vs Entra ID — <code>guides/03-azure-openai.md</code> (in the agentic-ai course) + <a href="azure-openai-101.html"><code>guides/101/azure-openai-101.md</code></a></li>
+</ul>
+<p><strong>Milestone:</strong> implement guide 09&#39;s &quot;Tool approval&quot; exercise for real — make <code>delete_note</code> require confirmation, with an approve/deny UI in <code>apps/chat/public/app.js</code>. Then add a typed <code>RunContext</code> carrying the current user, and gate at least one tool&#39;s <em>actual</em> authorization check inside its <code>execute</code> (not just <code>isEnabled</code>).</p>
+<h2>Phase 3 — Mastery: production-grade and specialized surfaces</h2>
+<ul>
+<li><input disabled="" type="checkbox"> SDK-native testing — <code>ScriptedModel</code>, assertions, and why this is a different question from answer quality — <a href="testing-evals-101.html"><code>guides/101/testing-evals-101.md</code></a></li>
+<li><input disabled="" type="checkbox"> Real evals — measuring whether answers got <em>better</em> after a change — <code>guides/09-hardening-next-steps.md</code> (in the agentic-ai course), &quot;Evals: measure, don&#39;t guess&quot;</li>
+<li><input disabled="" type="checkbox"> <code>SandboxAgent</code> — manifests, sessions, capabilities, providers, memory, for agents that need real shell/filesystem access — <a href="sandbox-agents-101.html"><code>guides/101/sandbox-agents-101.md</code></a></li>
+<li><input disabled="" type="checkbox"> <code>RealtimeAgent</code> / <code>RealtimeSession</code> — speech-to-speech, transports, ephemeral tokens (optional — only if voice is relevant to what you&#39;re building) — <a href="voice-agents-101.html"><code>guides/101/voice-agents-101.md</code></a></li>
+<li><input disabled="" type="checkbox"> Tracing and hardening — prompt injection, SSRF, least privilege, rate limits, OpenTelemetry — <code>guides/09-hardening-next-steps.md</code> (in the agentic-ai course)</li>
+<li><input disabled="" type="checkbox"> RAG as a retrieval surface over MCP — the dominant real-world pairing with agents — <code>guides/06-rag-and-embeddings.md</code> (in the agentic-ai course) + <code>guides/07-azure-ai-search.md</code> (in the agentic-ai course)</li>
+</ul>
+<p><strong>Capstone milestone:</strong> design and build a 4th MCP server from scratch (guide 04&#39;s exercise #5 — <code>github</code>, <code>azure-costs</code>, or <code>flashcards</code>). Wire it so that:</p>
+<ol>
+<li>at least one tool requires approval (<code>needsApproval</code>),</li>
+<li>authorization is enforced inside <code>execute</code> using a typed <code>RunContext</code>, not just <code>isEnabled</code>,</li>
+<li>you have a small <code>ScriptedModel</code>-based test suite covering the happy path and one failure mode,</li>
+<li>you have a tiny eval set (3–5 fixed questions) you can re-run after any prompt change.</li>
+</ol>
+<p>If you can do all four without re-reading the guides, you&#39;ve covered the SDK end to end — including the parts most tutorials skip (approval, context, testing).</p>
+<h2>What &quot;mastery&quot; actually looks like</h2>
+<p>Not &quot;I&#39;ve read every page&quot; — rather:</p>
+<ul>
+<li>You can explain <em>why</em> the SDK separates tools/resources/prompts in MCP, or local vs LLM-visible context, to someone else without looking it up.</li>
+<li>You can extend <code>apps/chat/src/agent.ts</code> with a new capability (a tool, a handoff, an approval gate) by reasoning from the primitives, not by copy-pasting the closest existing exercise.</li>
+<li>When something breaks, you can read the SDK&#39;s error (a 404 DeploymentNotFound, an <code>UnexpectedModelCallError</code>, a <code>content_filter</code> block) and know which layer it came from and why.</li>
+</ul>
+<h2>Next steps once you&#39;re through this</h2>
+<ul>
+<li>Guide 09&#39;s &quot;Stretch&quot; / &quot;Next projects&quot; section has ideas beyond this repo&#39;s scope.</li>
+<li>Re-read <a href="mcp-101.html"><code>guides/101/mcp-101.md</code></a>&#39;s comparison with <a href="grpc-101.html"><code>guides/101/grpc-101.md</code></a> — once the Agents SDK feels natural, protocol-level comparisons like this are a good way to deepen &quot;why this design, not that one&quot; intuition.</li>
+</ul>
+<p class="footer-links">Part of the <strong>Agentic AI on Azure</strong> course repo · also available as plain Markdown (<code>guides/agents-sdk-roadmap.md</code>) and with persistent checklist progress in the interactive study site (<code>npm run study</code>).</p>
+</div>
+<script>hljs.highlightAll();</script>
+</body>
+</html>

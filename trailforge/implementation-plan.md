@@ -39,7 +39,7 @@
  └──────── one PostgreSQL 17 server (Docker locally, Azure Flexible Server in the cloud) ────────┘
 
  assistant ──► Azure OpenAI (chat + embeddings)
-           ──► Azure AI Search (indexes: tf-products, tf-knowledge)
+           ──► Azure AI Search (one index tf-rag: type = product | knowledge)
            ──► MCP servers (public catalog / promotions), Streamable HTTP
            ──► services REST (private data, with the user's JWT)
 ```
@@ -130,8 +130,8 @@ returns:   delivered ──► partially_returned / returned   (refund = amount 
 
 | Index | Source | Notes |
 |---|---|---|
-| `tf-products` | `rag/products/*.md`, generated from `data/products.json` | One doc per product, filterable category/brand/price/tags |
-| `tf-knowledge` | `rag/knowledge/*.md` (51 docs) | Policies (refund, returns, cancellation, delivery & order status, damaged/lost, shipping, warranty, privacy, terms, overview), about, stores, loyalty, promotions, size/care/buying guides, FAQs |
+| `tf-rag` · `type eq 'product'` | `rag/products/*.md`, generated from `data/products.json` | Product chunks, filterable category/brand/price/tags |
+| `tf-rag` · `type eq 'knowledge'` | `rag/knowledge/*.md` (51 docs) | Policies (refund, returns, cancellation, delivery & order status, damaged/lost, shipping, warranty, privacy, terms, overview), about, stores, loyalty, promotions, size/care/buying guides, FAQs |
 
 Pipeline: `npm run rag:prepare` (render product docs) → `npm run rag:ingest` (chunk on headings → embed → upload). Never indexed: stock, prices, order data, customer reviews (user-generated = injection risk).
 
@@ -211,7 +211,7 @@ Streaming caveat: output guardrails run after the full answer, so high-stakes an
 | 1 | Scaffold: monorepo, Docker Postgres, shared lib, migrations | `docker compose up` + `npm run db:reset` | ✅ |
 | 2 | Microservices REST APIs + seed (30 users, 100 orders) | Queryable data, smoke-tested | ✅ |
 | 3 | Next.js storefront, admin console, auth, order stages | Working shop + admin | ✅ |
-| 4 | Azure AI foundation + RAG data, ingest & eval set | Search returns good results | 🟡 Azure + both indexes live · eval set open |
+| 4 | Azure AI foundation + RAG data, ingest & eval set | Search returns good results | 🟡 Azure + `tf-rag` index live · eval set open |
 | 5 | Assistant core: RAG tools, MCP servers, streaming chat | Pre-login Q&A with citations | ✅ verified live on Azure OpenAI + Azure AI Search |
 | 6 | Login-aware chat & memory | Pre/post-login chat | ✅ verified live (session trimming still open) |
 | 7 | Multi-agent: handoffs, agents as tools, structured output | Specialist agents | ⬜ |
@@ -246,9 +246,9 @@ Streaming caveat: output guardrails run after the full answer, so high-stakes an
 
 ### Phase 4: Azure AI foundation + RAG data 🟡
 - [x] 51 knowledge docs (incl. refund, delivery, cancellation, damaged/lost, policies overview) + 114 generated product docs
-- [x] `rag:prepare` and `rag:ingest` scripts (heading-aware chunking, two indexes, vector + semantic config)
+- [x] `rag:prepare` and `rag:ingest` scripts (heading-aware chunking, one index with a `type` field, vector + semantic config)
 - [x] Provisioned Azure OpenAI (`gpt-5-mini`, `text-embedding-3-small`) + Azure AI Search (Free) in Southeast Asia; `.env` filled (guides: [Azure OpenAI Setup](azure-openai-setup.md), [Azure AI Search for RAG](azure-ai-search-rag-setup.md))
-- [x] Portal walkthrough (wizard index for knowledge) + `rag:ingest`: `tf-products` 574 chunks, `tf-knowledge` 380 chunks
+- [x] Portal walkthrough (wizard index for knowledge) + `rag:ingest`: now one index `tf-rag`: 574 product + 380 knowledge chunks (1 of 3 Free-tier index slots)
 - [ ] RAG eval set: ~30 questions with expected source docs; report hit@3
 
 ### Phase 5: Assistant core 🟡
@@ -257,7 +257,7 @@ Streaming caveat: output guardrails run after the full answer, so high-stakes an
 - [x] **Separate-app boundary:** assistant has no store API calls; function tools removed; store reached only via MCP through the gateway
 - [x] `mcp-account` server (per-user, user JWT per request) + gateway `/mcp/*` publishing (with `x-mcp-key`); admin approvals composed by the gateway
 - [x] MCP tool filter: agent sees only live catalog tools (`get_product`, `check_stock`, `get_reviews`)
-- [x] RAG tools built: `search_catalog` (tf-products, filters + category facets, dedupe per product) and `search_knowledge` (tf-knowledge, citations); hybrid + semantic with fallback
+- [x] RAG tools built: `search_catalog` (`type eq 'product'`, filters + category facets, dedupe per product) and `search_knowledge` (`type eq 'knowledge'`, citations); hybrid + semantic with fallback
 - [x] RAG tools verified live on Azure: list/count products (114, 12 per category), filtered product search, policy answers with citations, combined with account MCP
 - [x] MCP servers `mcp-catalog` (5 tools, resource + template, prompt) and `mcp-promotions` (3 tools, resource, prompt) on a shared `@tf/mcp-kit` host (Streamable HTTP, stateless)
 - [x] Assistant connects with `connectMcpServers` (`dropFailed`, 30 s retry); falls back to local function tools when a server is down; `/api/admin/assistant/status`

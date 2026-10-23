@@ -68,7 +68,7 @@ Companion course repo: <a href="https://github.com/mk-tdev/agentic-ai">https://g
 <li><strong>OpenAI Agents SDK, end to end:</strong> agents, tools, MCP, handoffs, guardrails, sessions, streaming, structured output, human-in-the-loop, tracing (full map in §5).</li>
 <li><strong>Agentic RAG with Azure AI Search:</strong><ul>
 <li>data preparation and chunking;</li>
-<li>two indexes (products, knowledge);</li>
+<li>one index (<code>tf-rag</code>) holding product and knowledge chunks, filtered by <code>type</code>;</li>
 <li>hybrid search (BM25 + vectors + RRF);</li>
 <li>semantic ranker and filters;</li>
 <li>citations;</li>
@@ -124,7 +124,7 @@ Companion course repo: <a href="https://github.com/mk-tdev/agentic-ai">https://g
 </tr>
 <tr>
 <td>Retrieval</td>
-<td><strong>Azure AI Search</strong> (<code>@azure/search-documents</code>): indexes <code>tf-products</code>, <code>tf-knowledge</code></td>
+<td><strong>Azure AI Search</strong> (<code>@azure/search-documents</code>): one index <code>tf-rag</code> (<code>type</code> = product / knowledge)</td>
 </tr>
 <tr>
 <td>Tools protocol</td>
@@ -310,7 +310,7 @@ npm run typecheck &amp;&amp; npm run build -w @tf/web
 </tr>
 <tr>
 <td>4. Azure AI foundation + RAG data/ingest/eval</td>
-<td>🟡 Azure OpenAI + AI Search (Free) live, both indexes ingested; eval set open</td>
+<td>🟡 Azure OpenAI + AI Search (Free) live, <code>tf-rag</code> index ingested (954 chunks); eval set open</td>
 </tr>
 <tr>
 <td>5. Assistant core (search tools, MCP, streaming)</td>

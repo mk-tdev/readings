@@ -22,7 +22,7 @@
         ┌──────────── AI SIDE (a separate app) ─────────────┐
         │ assistant :4100  (services/assistant)               │
         │   OpenAI Agents SDK agent                           │──► Azure OpenAI  (chat model + embeddings)
-        │   RAG tools ────────────────────────────────────────│──► Azure AI Search (tf-products, tf-knowledge)
+        │   RAG tools ────────────────────────────────────────│──► Azure AI Search (one index: tf-rag)    
         │   own DB: conversations (chat memory)               │
         └─────────────────────────────────────────────────────┘
 ```
@@ -371,8 +371,9 @@ setDefaultOpenAIClient(client);                                // the Agents SDK
 ### 9.1 Setup
 ```ts
 const credential = AZURE_SEARCH_API_KEY ? new AzureKeyCredential(key) : new DefaultAzureCredential();
-const products  = new SearchClient(AZURE_SEARCH_ENDPOINT, 'tf-products',  credential);
-const knowledge = new SearchClient(AZURE_SEARCH_ENDPOINT, 'tf-knowledge', credential);
+const search    = new SearchClient(AZURE_SEARCH_ENDPOINT, 'tf-rag', credential);  // ONE index:
+// every chunk has type = 'product' | 'knowledge'; search_catalog filters type eq 'product',
+// search_knowledge filters type eq 'knowledge', so the two never mix.
 const embedder  = createOpenAIClient(ai.embeddings);   // Azure OpenAI, for query embeddings
 ```
 
@@ -382,8 +383,9 @@ const embedder  = createOpenAIClient(ai.embeddings);   // Azure OpenAI, for quer
 const vector = (await embedder.embeddings.create({ model: 'text-embedding-3-small', input: query })).data[0].embedding;
 
 // 2. HYBRID search: keywords + vector, then the semantic re-ranker
-await knowledge.search(query, {
+await search.search(query, {
   top: 5,
+  filter: "type eq 'knowledge'",
   select: ['id','source','title','section','chunkIndex','content'],          // only fields this index has
   vectorSearchOptions: { queries: [{ kind: 'vector', vector, fields: ['contentVector'], kNearestNeighborsCount: 50 }] },
   queryType: 'semantic', semanticSearchOptions: { configurationName: 'semantic' },
@@ -392,16 +394,16 @@ await knowledge.search(query, {
 // 3. format passages with citation ids for the model
 "[returns-and-refunds.md#1] Returns and Refunds Policy › The return window\n- Electronics … 30 days …"
 ```
-The SDK turns that into `POST https://<search>.search.windows.net/indexes/tf-knowledge/docs/search?api-version=…` with an Entra token (your **Search Index Data Contributor** role locally; the Managed Identity on Azure). Azure AI Search runs BM25 keyword ranking and HNSW vector nearest-neighbours, fuses them with **RRF**, and re-ranks with the semantic model.
+The SDK turns that into `POST https://<search>.search.windows.net/indexes/tf-rag/docs/search?api-version=…` with an Entra token (your **Search Index Data Contributor** role locally; the Managed Identity on Azure). Azure AI Search runs BM25 keyword ranking and HNSW vector nearest-neighbours, fuses them with **RRF**, and re-ranks with the semantic model.
 
 ### 9.3 `search_catalog` adds filters and counts
-- **Filters** (OData) built from tool arguments: `category eq 'tents' and priceCents le 40000 and tags/any(t: t eq 'vegan')`.
+- **Filters** (OData) built from tool arguments, always starting with the type: `type eq 'product' and category eq 'tents' and priceCents le 40000 and tags/any(t: t eq 'vegan')`.
 - **Dedupe:** each product has about 5 chunks; keep the best chunk per `slug`.
 - **"List all products":** a second query `search('*', { top: 0, facets: ['category'], filter: 'chunkIndex eq 0' })` counts **one chunk per product**, so the counts are products (12 per category), not chunks.
 - **Fallbacks:** no `AZURE_SEARCH_ENDPOINT` → `SEARCH_UNAVAILABLE` (the agent says search is unavailable instead of guessing). Semantic ranker not available → plain hybrid.
 
 ### 9.4 Where the index came from (`scripts/rag/src/ingest.ts`)
-Offline, not at chat time: read `rag/*/*.md` → split on `##` headings (~900 chars, 150 overlap) → embed in batches of 16 with Azure OpenAI → `createOrUpdateIndex(schema)` → `mergeOrUploadDocuments` in batches of 500.
+Offline, not at chat time: read `rag/products/*.md` (type `product`) and `rag/knowledge/*.md` (type `knowledge`) → split on `##` headings (~900 chars, 150 overlap) → embed in batches of 16 with Azure OpenAI → `createOrUpdateIndex(schema)` → `mergeOrUploadDocuments` in batches of 500, all into the one `tf-rag` index.
 
 ## 10. All the credentials in one table
 
@@ -442,7 +444,7 @@ Offline, not at chat time: read `rag/*/*.md` → split on `##` headings (~900 ch
 2. **Call a service directly:** `curl localhost:4002/products?q=tent` (the catalog, bypassing the gateway). Then `curl localhost:4004/me/orders` without a token → 401. Why?
 3. **Speak MCP:** `npm run mcp:cli -- --server account --method tools/call --tool-name get_my_orders` → `AUTH_REQUIRED`. Then add `--header "Authorization: Bearer <token>"` (see the MCP guide).
 4. **See the agent loop:** in `services/assistant/src/index.ts` → `forward()`, add `console.log(event.type, event.name)` and send one chat message. Count the model calls and tool calls.
-5. **Query RAG yourself:** in Azure portal → `tf-knowledge` → Search explorer, search `GPS watch return`, and compare with what `search_knowledge` returned in the chat tool card.
+5. **Query RAG yourself:** in Azure portal → `tf-rag` → Search explorer, search `GPS watch return` (JSON view: add `"filter": "type eq 'knowledge'"`), and compare with what `search_knowledge` returned in the chat tool card.
 6. **Break it on purpose:** stop `mcp-catalog`, ask "is the Ridgeline tent in stock?" and see how the assistant degrades.
 
 ## 14. Glossary

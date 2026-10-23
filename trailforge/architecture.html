@@ -496,11 +496,11 @@ returns:   delivered ──► partially_returned / returned   (refund + restock
 </thead>
 <tbody><tr>
 <td>Find/list/compare products, specs</td>
-<td>RAG <code>search_catalog</code> (<code>tf-products</code>)</td>
+<td>RAG <code>search_catalog</code> (<code>tf-rag</code>, <code>type eq &#39;product&#39;</code>)</td>
 </tr>
 <tr>
 <td>Policies, guides, FAQs</td>
-<td>RAG <code>search_knowledge</code> (<code>tf-knowledge</code>)</td>
+<td>RAG <code>search_knowledge</code> (<code>tf-rag</code>, <code>type eq &#39;knowledge&#39;</code>)</td>
 </tr>
 <tr>
 <td>Live stock / exact price / reviews</td>

@@ -217,33 +217,37 @@ curl -s "https://trailforge-search-devtest.search.windows.net/indexes/tf-portal-
 
 Deleted files stay in the index unless *deletion tracking* is enabled on the data source.
 
-## 8. Next: the app's indexes (and the Free-tier limit)
+## 8. Next: the app's index (and the Free-tier limit)
 
-TrailForge's assistant reads the **script's** indexes (`tf-knowledge`, `tf-products`). They use different field names (`content`, `contentVector`, `section`…) and real filter fields for products (`category`, `brand`, `priceCents`, `tags`). The portal indexes are your **learning copies**.
+TrailForge's assistant reads the **script's** index **`tf-rag`**: one index for products *and* knowledge, told apart by a filterable `type` field (`product` | `knowledge`). It uses different field names from the wizard (`content`, `contentVector`, `section`…) and real filter fields for products (`category`, `brand`, `priceCents`, `tags`). The portal indexes are your **learning copies**.
 
-Free tier = **3 indexes**. You have 2 portal indexes; the script needs 2. So before running the script, **delete the portal products objects**:
-1. **Indexers** → `tf-portal-products-indexer` → **Delete**.
-2. **Indexes** → `tf-portal-products` → **Delete**.
-3. **Skillsets** → `tf-portal-products-skillset` → **Delete**.
-4. **Data sources** → `tf-portal-products-datasource` → **Delete**.
+Free tier = **3 indexes** (and 3 indexers / data sources / skillsets). The script needs **1**. When you're done exploring, delete the portal objects for each import (indexer → index → skillset → data source) to free the slots:
+1. **Indexers** → `…-indexer` → **Delete**.
+2. **Indexes** → the portal index → **Delete**.
+3. **Skillsets** → `…-skillset` → **Delete**.
+4. **Data sources** → `…-datasource` → **Delete**.
 
-Keep `tf-portal-knowledge` to compare with the script's `tf-knowledge`. Then:
+Then build the app's index:
 ```bash
 # trailforge/.env
 AZURE_OPENAI_ENDPOINT=https://trailforge-openai-devtest.openai.azure.com
 AZURE_OPENAI_EMBEDDING_DEPLOYMENT=text-embedding-3-small
 AZURE_SEARCH_ENDPOINT=https://trailforge-search-devtest.search.windows.net
+AZURE_SEARCH_INDEX=tf-rag
 EMBEDDING_PROVIDER=azure        # ingest AND queries must use the same embedding provider
 npm run rag:prepare && npm run rag:ingest
 ```
-(The script uses your `az login` identity: role **C** on the search service, plus **Cognitive Services OpenAI User** on `trailforge-openai-devtest`, which you already have.)
+(The script uses your `az login` identity: role **C** on the search service, plus **Cognitive Services OpenAI User** on `trailforge-openai-devtest`, which you already have.) Result: **1 of 3 index slots used**, 954 chunks.
 
-| | Portal `tf-portal-knowledge` | Script `tf-knowledge` |
+| | Portal (wizard) index | Script `tf-rag` |
 |---|---|---|
 | Chunks | Fixed size (~2000 chars, ~500 overlap); can cut mid-section | `##` headings first, ~900 chars; keeps the heading with each chunk |
-| Fields | `chunk_id`, `parent_id`, `chunk`, `title`, `text_vector` | `id`, `source`, `title`, `section`, `chunkIndex`, `content`, `contentVector` |
+| Fields | `chunk_id`, `parent_id`, `chunk`, `title`, `text_vector` | `id`, `type`, `source`, `title`, `section`, `chunkIndex`, `content`, `contentVector` (+ product fields) |
 | Query embedding | The index's vectorizer | The app |
-| Product filters | ✗ | ✓ (`tf-products`) |
+| Product filters | ✗ | ✓ (`type eq 'product' and category eq …`) |
+| Indexes used | one per import | one for everything |
+
+**Watch the storage limit too:** the Free tier allows 50 MB per service. `tf-rag` (954 chunks with 1536-number vectors) is the main user of that space.
 
 ## 9. Cost
 
@@ -278,6 +282,6 @@ Delete the portal objects in this order: **indexers → indexes → skillsets �
 - [ ] §4 Wizard for `tf-knowledge-docs` → `tf-portal-knowledge` (51 docs, Success)
 - [ ] §5 Wizard for `tf-products-docs` → `tf-portal-products` (114 docs, Success)
 - [ ] §7 Read the JSON; ran keyword, vector, hybrid and semantic queries; re-indexed one changed file
-- [ ] §8 Deleted portal products objects; ran the script for `tf-knowledge` + `tf-products`
+- [ ] §8 Deleted the portal objects when done; ran the script to build `tf-rag`
 
 Related: [Azure AI Search for RAG (script)](azure-ai-search-rag-setup.md) · [Azure OpenAI Setup](azure-openai-setup.md) · [Implementation Plan](implementation-plan.md)

@@ -348,30 +348,31 @@ curl -s &quot;https://trailforge-search-devtest.search.windows.net/indexes/tf-po
 <li>Search for your new sentence.</li>
 </ol>
 <p>Deleted files stay in the index unless <em>deletion tracking</em> is enabled on the data source.</p>
-<h2>8. Next: the app&#39;s indexes (and the Free-tier limit)</h2>
-<p>TrailForge&#39;s assistant reads the <strong>script&#39;s</strong> indexes (<code>tf-knowledge</code>, <code>tf-products</code>). They use different field names (<code>content</code>, <code>contentVector</code>, <code>section</code>…) and real filter fields for products (<code>category</code>, <code>brand</code>, <code>priceCents</code>, <code>tags</code>). The portal indexes are your <strong>learning copies</strong>.</p>
-<p>Free tier = <strong>3 indexes</strong>. You have 2 portal indexes; the script needs 2. So before running the script, <strong>delete the portal products objects</strong>:</p>
+<h2>8. Next: the app&#39;s index (and the Free-tier limit)</h2>
+<p>TrailForge&#39;s assistant reads the <strong>script&#39;s</strong> index <strong><code>tf-rag</code></strong>: one index for products <em>and</em> knowledge, told apart by a filterable <code>type</code> field (<code>product</code> | <code>knowledge</code>). It uses different field names from the wizard (<code>content</code>, <code>contentVector</code>, <code>section</code>…) and real filter fields for products (<code>category</code>, <code>brand</code>, <code>priceCents</code>, <code>tags</code>). The portal indexes are your <strong>learning copies</strong>.</p>
+<p>Free tier = <strong>3 indexes</strong> (and 3 indexers / data sources / skillsets). The script needs <strong>1</strong>. When you&#39;re done exploring, delete the portal objects for each import (indexer → index → skillset → data source) to free the slots:</p>
 <ol>
-<li><strong>Indexers</strong> → <code>tf-portal-products-indexer</code> → <strong>Delete</strong>.</li>
-<li><strong>Indexes</strong> → <code>tf-portal-products</code> → <strong>Delete</strong>.</li>
-<li><strong>Skillsets</strong> → <code>tf-portal-products-skillset</code> → <strong>Delete</strong>.</li>
-<li><strong>Data sources</strong> → <code>tf-portal-products-datasource</code> → <strong>Delete</strong>.</li>
+<li><strong>Indexers</strong> → <code>…-indexer</code> → <strong>Delete</strong>.</li>
+<li><strong>Indexes</strong> → the portal index → <strong>Delete</strong>.</li>
+<li><strong>Skillsets</strong> → <code>…-skillset</code> → <strong>Delete</strong>.</li>
+<li><strong>Data sources</strong> → <code>…-datasource</code> → <strong>Delete</strong>.</li>
 </ol>
-<p>Keep <code>tf-portal-knowledge</code> to compare with the script&#39;s <code>tf-knowledge</code>. Then:</p>
+<p>Then build the app&#39;s index:</p>
 <pre><code class="language-bash"># trailforge/.env
 AZURE_OPENAI_ENDPOINT=https://trailforge-openai-devtest.openai.azure.com
 AZURE_OPENAI_EMBEDDING_DEPLOYMENT=text-embedding-3-small
 AZURE_SEARCH_ENDPOINT=https://trailforge-search-devtest.search.windows.net
+AZURE_SEARCH_INDEX=tf-rag
 EMBEDDING_PROVIDER=azure        # ingest AND queries must use the same embedding provider
 npm run rag:prepare &amp;&amp; npm run rag:ingest
 </code></pre>
-<p>(The script uses your <code>az login</code> identity: role <strong>C</strong> on the search service, plus <strong>Cognitive Services OpenAI User</strong> on <code>trailforge-openai-devtest</code>, which you already have.)</p>
+<p>(The script uses your <code>az login</code> identity: role <strong>C</strong> on the search service, plus <strong>Cognitive Services OpenAI User</strong> on <code>trailforge-openai-devtest</code>, which you already have.) Result: <strong>1 of 3 index slots used</strong>, 954 chunks.</p>
 <table>
 <thead>
 <tr>
 <th></th>
-<th>Portal <code>tf-portal-knowledge</code></th>
-<th>Script <code>tf-knowledge</code></th>
+<th>Portal (wizard) index</th>
+<th>Script <code>tf-rag</code></th>
 </tr>
 </thead>
 <tbody><tr>
@@ -382,7 +383,7 @@ npm run rag:prepare &amp;&amp; npm run rag:ingest
 <tr>
 <td>Fields</td>
 <td><code>chunk_id</code>, <code>parent_id</code>, <code>chunk</code>, <code>title</code>, <code>text_vector</code></td>
-<td><code>id</code>, <code>source</code>, <code>title</code>, <code>section</code>, <code>chunkIndex</code>, <code>content</code>, <code>contentVector</code></td>
+<td><code>id</code>, <code>type</code>, <code>source</code>, <code>title</code>, <code>section</code>, <code>chunkIndex</code>, <code>content</code>, <code>contentVector</code> (+ product fields)</td>
 </tr>
 <tr>
 <td>Query embedding</td>
@@ -392,9 +393,15 @@ npm run rag:prepare &amp;&amp; npm run rag:ingest
 <tr>
 <td>Product filters</td>
 <td>✗</td>
-<td>✓ (<code>tf-products</code>)</td>
+<td>✓ (<code>type eq &#39;product&#39; and category eq …</code>)</td>
+</tr>
+<tr>
+<td>Indexes used</td>
+<td>one per import</td>
+<td>one for everything</td>
 </tr>
 </tbody></table>
+<p><strong>Watch the storage limit too:</strong> the Free tier allows 50 MB per service. <code>tf-rag</code> (954 chunks with 1536-number vectors) is the main user of that space.</p>
 <h2>9. Cost</h2>
 <ul>
 <li><strong>Search:</strong> Free = $0.</li>
@@ -467,7 +474,7 @@ npm run rag:prepare &amp;&amp; npm run rag:ingest
 <li><input disabled="" type="checkbox"> §4 Wizard for <code>tf-knowledge-docs</code> → <code>tf-portal-knowledge</code> (51 docs, Success)</li>
 <li><input disabled="" type="checkbox"> §5 Wizard for <code>tf-products-docs</code> → <code>tf-portal-products</code> (114 docs, Success)</li>
 <li><input disabled="" type="checkbox"> §7 Read the JSON; ran keyword, vector, hybrid and semantic queries; re-indexed one changed file</li>
-<li><input disabled="" type="checkbox"> §8 Deleted portal products objects; ran the script for <code>tf-knowledge</code> + <code>tf-products</code></li>
+<li><input disabled="" type="checkbox"> §8 Deleted the portal objects when done; ran the script to build <code>tf-rag</code></li>
 </ul>
 <p>Related: <a href="azure-ai-search-rag-setup.html">Azure AI Search for RAG (script)</a> · <a href="azure-openai-setup.html">Azure OpenAI Setup</a> · <a href="implementation-plan.html">Implementation Plan</a></p>
 </main></div></body></html>

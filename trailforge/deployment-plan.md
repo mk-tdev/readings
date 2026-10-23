@@ -30,7 +30,7 @@
   │     jobs: db-migrate · db-seed (demo) · rag-ingest                                       │
   │                                                                                         │
   │   Azure Database for PostgreSQL Flexible Server (8 databases: tf_customer … tf_assistant)│
-  │   Azure OpenAI (gpt-5-mini, text-embedding-3-small)   Azure AI Search (tf-products, tf-knowledge)│
+  │   Azure OpenAI (gpt-5-mini, text-embedding-3-small)   Azure AI Search (one index: tf-rag)        │
   │   Azure Container Registry · Key Vault · Managed Identity · Application Insights         │
   └─────────────────────────────────────────────────────────────────────────────────────────┘
 ```

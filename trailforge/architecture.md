@@ -203,8 +203,8 @@ The assistant is a **separate application** owned by another team. It reaches th
 
 | Need | Source |
 |---|---|
-| Find/list/compare products, specs | RAG `search_catalog` (`tf-products`) |
-| Policies, guides, FAQs | RAG `search_knowledge` (`tf-knowledge`) |
+| Find/list/compare products, specs | RAG `search_catalog` (`tf-rag`, `type eq 'product'`) |
+| Policies, guides, FAQs | RAG `search_knowledge` (`tf-rag`, `type eq 'knowledge'`) |
 | Live stock / exact price / reviews | MCP catalog, filtered to `get_product`, `check_stock`, `get_reviews` |
 | Public promotions, code checks | MCP promotions |
 | The user's orders, offers, profile, return eligibility | MCP account, per-request connection with the user's JWT |

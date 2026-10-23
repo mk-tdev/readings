@@ -55,7 +55,7 @@ blockquote{margin:16px 0;padding:8px 16px;border-left:4px solid var(--accent);ba
  └──────── one PostgreSQL 17 server (Docker locally, Azure Flexible Server in the cloud) ────────┘
 
  assistant ──► Azure OpenAI (chat + embeddings)
-           ──► Azure AI Search (indexes: tf-products, tf-knowledge)
+           ──► Azure AI Search (one index tf-rag: type = product | knowledge)
            ──► MCP servers (public catalog / promotions), Streamable HTTP
            ──► services REST (private data, with the user&#39;s JWT)
 </code></pre>
@@ -224,12 +224,12 @@ returns:   delivered ──► partially_returned / returned   (refund = amount 
 </tr>
 </thead>
 <tbody><tr>
-<td><code>tf-products</code></td>
+<td><code>tf-rag</code> · <code>type eq &#39;product&#39;</code></td>
 <td><code>rag/products/*.md</code>, generated from <code>data/products.json</code></td>
-<td>One doc per product, filterable category/brand/price/tags</td>
+<td>Product chunks, filterable category/brand/price/tags</td>
 </tr>
 <tr>
-<td><code>tf-knowledge</code></td>
+<td><code>tf-rag</code> · <code>type eq &#39;knowledge&#39;</code></td>
 <td><code>rag/knowledge/*.md</code> (51 docs)</td>
 <td>Policies (refund, returns, cancellation, delivery &amp; order status, damaged/lost, shipping, warranty, privacy, terms, overview), about, stores, loyalty, promotions, size/care/buying guides, FAQs</td>
 </tr>
@@ -459,7 +459,7 @@ returns:   delivered ──► partially_returned / returned   (refund = amount 
 <td>4</td>
 <td>Azure AI foundation + RAG data, ingest &amp; eval set</td>
 <td>Search returns good results</td>
-<td>🟡 Azure + both indexes live · eval set open</td>
+<td>🟡 Azure + <code>tf-rag</code> index live · eval set open</td>
 </tr>
 <tr>
 <td>5</td>
@@ -539,9 +539,9 @@ returns:   delivered ──► partially_returned / returned   (refund = amount 
 <h3>Phase 4: Azure AI foundation + RAG data 🟡</h3>
 <ul>
 <li><input checked="" disabled="" type="checkbox"> 51 knowledge docs (incl. refund, delivery, cancellation, damaged/lost, policies overview) + 114 generated product docs</li>
-<li><input checked="" disabled="" type="checkbox"> <code>rag:prepare</code> and <code>rag:ingest</code> scripts (heading-aware chunking, two indexes, vector + semantic config)</li>
+<li><input checked="" disabled="" type="checkbox"> <code>rag:prepare</code> and <code>rag:ingest</code> scripts (heading-aware chunking, one index with a <code>type</code> field, vector + semantic config)</li>
 <li><input checked="" disabled="" type="checkbox"> Provisioned Azure OpenAI (<code>gpt-5-mini</code>, <code>text-embedding-3-small</code>) + Azure AI Search (Free) in Southeast Asia; <code>.env</code> filled (guides: <a href="azure-openai-setup.html">Azure OpenAI Setup</a>, <a href="azure-ai-search-rag-setup.html">Azure AI Search for RAG</a>)</li>
-<li><input checked="" disabled="" type="checkbox"> Portal walkthrough (wizard index for knowledge) + <code>rag:ingest</code>: <code>tf-products</code> 574 chunks, <code>tf-knowledge</code> 380 chunks</li>
+<li><input checked="" disabled="" type="checkbox"> Portal walkthrough (wizard index for knowledge) + <code>rag:ingest</code>: now one index <code>tf-rag</code>: 574 product + 380 knowledge chunks (1 of 3 Free-tier index slots)</li>
 <li><input disabled="" type="checkbox"> RAG eval set: ~30 questions with expected source docs; report hit@3</li>
 </ul>
 <h3>Phase 5: Assistant core 🟡</h3>
@@ -551,7 +551,7 @@ returns:   delivered ──► partially_returned / returned   (refund = amount 
 <li><input checked="" disabled="" type="checkbox"> <strong>Separate-app boundary:</strong> assistant has no store API calls; function tools removed; store reached only via MCP through the gateway</li>
 <li><input checked="" disabled="" type="checkbox"> <code>mcp-account</code> server (per-user, user JWT per request) + gateway <code>/mcp/*</code> publishing (with <code>x-mcp-key</code>); admin approvals composed by the gateway</li>
 <li><input checked="" disabled="" type="checkbox"> MCP tool filter: agent sees only live catalog tools (<code>get_product</code>, <code>check_stock</code>, <code>get_reviews</code>)</li>
-<li><input checked="" disabled="" type="checkbox"> RAG tools built: <code>search_catalog</code> (tf-products, filters + category facets, dedupe per product) and <code>search_knowledge</code> (tf-knowledge, citations); hybrid + semantic with fallback</li>
+<li><input checked="" disabled="" type="checkbox"> RAG tools built: <code>search_catalog</code> (<code>type eq &#39;product&#39;</code>, filters + category facets, dedupe per product) and <code>search_knowledge</code> (<code>type eq &#39;knowledge&#39;</code>, citations); hybrid + semantic with fallback</li>
 <li><input checked="" disabled="" type="checkbox"> RAG tools verified live on Azure: list/count products (114, 12 per category), filtered product search, policy answers with citations, combined with account MCP</li>
 <li><input checked="" disabled="" type="checkbox"> MCP servers <code>mcp-catalog</code> (5 tools, resource + template, prompt) and <code>mcp-promotions</code> (3 tools, resource, prompt) on a shared <code>@tf/mcp-kit</code> host (Streamable HTTP, stateless)</li>
 <li><input checked="" disabled="" type="checkbox"> Assistant connects with <code>connectMcpServers</code> (<code>dropFailed</code>, 30 s retry); falls back to local function tools when a server is down; <code>/api/admin/assistant/status</code></li>

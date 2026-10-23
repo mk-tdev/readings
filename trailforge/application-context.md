@@ -48,7 +48,7 @@ By the end, the user should be able to explain and build:
 3. **OpenAI Agents SDK, end to end:** agents, tools, MCP, handoffs, guardrails, sessions, streaming, structured output, human-in-the-loop, tracing (full map in §5).
 4. **Agentic RAG with Azure AI Search:**
    - data preparation and chunking;
-   - two indexes (products, knowledge);
+   - one index (`tf-rag`) holding product and knowledge chunks, filtered by `type`;
    - hybrid search (BM25 + vectors + RRF);
    - semantic ranker and filters;
    - citations;
@@ -73,7 +73,7 @@ By the end, the user should be able to explain and build:
 | Chat app | **React 19 + Vite** SPA |
 | Shared chat UI | `packages/chat-ui`: React components (`ChatWidget`, `ChatPage`, `useChat`), manual SSE parsing |
 | AI | **OpenAI Agents SDK (`@openai/agents` 0.20)**, `openai` SDK, **Azure OpenAI** (`gpt-5-mini`, `text-embedding-3-small`) through the v1 endpoint, Entra ID via `@azure/identity`; or **OpenAI platform** with `MODEL_PROVIDER=openai` (auto-detected when only `OPENAI_API_KEY` is set) |
-| Retrieval | **Azure AI Search** (`@azure/search-documents`): indexes `tf-products`, `tf-knowledge` |
+| Retrieval | **Azure AI Search** (`@azure/search-documents`): one index `tf-rag` (`type` = product / knowledge) |
 | Tools protocol | **MCP** (`@modelcontextprotocol/sdk`, Streamable HTTP) |
 | Seed data | `@faker-js/faker` with a fixed seed (deterministic) |
 
@@ -173,7 +173,7 @@ Full checklist per phase: **`research/implementation-plan.md` §12**. Deployment
 | 1. Scaffold | ✅ |
 | 2. Microservices + seed | ✅ |
 | 3. Next.js storefront, admin console, auth, order stages | ✅ |
-| 4. Azure AI foundation + RAG data/ingest/eval | 🟡 Azure OpenAI + AI Search (Free) live, both indexes ingested; eval set open |
+| 4. Azure AI foundation + RAG data/ingest/eval | 🟡 Azure OpenAI + AI Search (Free) live, `tf-rag` index ingested (954 chunks); eval set open |
 | 5. Assistant core (search tools, MCP, streaming) | ✅ verified live (Azure OpenAI + Azure AI Search + MCP) |
 | 6. Login-aware chat & memory | ✅ verified live |
 | 7. Multi-agent (handoffs, agents as tools, structured output) | ⬜ |

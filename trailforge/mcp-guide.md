@@ -40,8 +40,8 @@ Messages are **JSON-RPC 2.0**. The transport we use is **Streamable HTTP**: the 
 
 | Data | Comes from | Why |
 |---|---|---|
-| Finding/listing products, specs, comparisons | **RAG**: `search_catalog` over `tf-products` | The AI app's own index (a published snapshot of the catalog) |
-| Policies, guides, FAQs | **RAG**: `search_knowledge` over `tf-knowledge` | Same |
+| Finding/listing products, specs, comparisons | **RAG**: `search_catalog` over `tf-rag` (`type eq 'product'`) | The AI app's own index (a published snapshot of the catalog) |
+| Policies, guides, FAQs | **RAG**: `search_knowledge` over `tf-rag` (`type eq 'knowledge'`) | Same |
 | Live stock, exact current price, reviews | **MCP catalog**, filtered to `get_product`, `check_stock`, `get_reviews` | The index is a snapshot; the store owns live data |
 | Public promotions, promo-code checks | **MCP promotions** | Live, public |
 | My orders, order details, my offers, my profile, return eligibility | **MCP account**, called as the user | Personal data: the store checks the user's JWT on every call |

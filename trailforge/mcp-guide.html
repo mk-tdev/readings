@@ -89,12 +89,12 @@ Code: <code>packages/mcp-kit</code>, <code>services/mcp-catalog</code>, <code>se
 </thead>
 <tbody><tr>
 <td>Finding/listing products, specs, comparisons</td>
-<td><strong>RAG</strong>: <code>search_catalog</code> over <code>tf-products</code></td>
+<td><strong>RAG</strong>: <code>search_catalog</code> over <code>tf-rag</code> (<code>type eq &#39;product&#39;</code>)</td>
 <td>The AI app&#39;s own index (a published snapshot of the catalog)</td>
 </tr>
 <tr>
 <td>Policies, guides, FAQs</td>
-<td><strong>RAG</strong>: <code>search_knowledge</code> over <code>tf-knowledge</code></td>
+<td><strong>RAG</strong>: <code>search_knowledge</code> over <code>tf-rag</code> (<code>type eq &#39;knowledge&#39;</code>)</td>
 <td>Same</td>
 </tr>
 <tr>

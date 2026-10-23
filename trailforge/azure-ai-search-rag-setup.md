@@ -27,33 +27,34 @@ An LLM doesn't know TrailForge's return policy or product specs. **RAG** fixes t
 | Concept | What it is | TrailForge |
 |---|---|---|
 | **Search service** | The Azure resource (endpoint `https://<name>.search.windows.net`) | One service |
-| **Index** | A table of documents with a schema | `tf-knowledge` (policies, guides, FAQs) and `tf-products` (one doc per product chunk) |
-| **Document** | One row; for RAG, one **chunk** | `returns-and-refunds-3` = 4th chunk of the returns policy |
+| **Index** | A table of documents with a schema | **One** index `tf-rag`: product chunks and knowledge chunks (policies, guides, FAQs), told apart by a `type` field |
+| **Document** | One row; for RAG, one **chunk** | `knowledge-returns-and-refunds-3` = 4th chunk of the returns policy |
 | **Field attributes** | `searchable` (full-text), `filterable`, `sortable`, `facetable`, `key` | `category`, `priceCents` filterable on products |
 | **Keyword search (BM25)** | Classic ranking: rare query words that appear often in a chunk score high | Great for exact terms ("FALLTRAIL20", "3L shell") |
 | **Vector search (HNSW)** | Each chunk's embedding is stored; the query embedding finds the *nearest meanings* (cosine) | "Can I send back my headlamp?" finds "Electronics: 30 days" |
 | **Hybrid search** | Run both, then merge with **Reciprocal Rank Fusion (RRF)** | Our default for RAG: robust to both exact codes and paraphrases |
 | **Semantic ranker** | A Microsoft re-ranking model that re-orders the top results by how well they answer the question; can also return captions | Optional on top of hybrid (`queryType: semantic`) |
-| **Filters** | OData expressions applied before/with ranking | `category eq 'tents' and priceCents le 40000` |
+| **Filters** | OData expressions applied before/with ranking | `type eq 'product' and category eq 'tents' and priceCents le 40000` |
 
-**Why two indexes?** Products and policies are different shapes: products need filters (category, brand, price, tags) and are re-generated from `data/products.json`, while knowledge docs are handwritten prose. Separate indexes keep schemas simple and let the agent pick the right one.
+**Why one index with a `type` field?** Products and policies are different shapes (products need category/brand/price/tag filters; knowledge docs are prose), but one index with a filterable `type` (`product` | `knowledge`) handles both: product fields are simply empty on knowledge chunks, and every query filters on `type`, so they never mix. It uses **1 of the Free tier's 3 index slots**, leaving the rest for other projects. (Larger systems often keep separate indexes so each can be rebuilt, scaled or secured independently; at this size one index is simpler.)
 
 **What we never index:** live stock, live prices, orders, customer data, customer reviews (user-written text, so a prompt-injection risk). Live facts come from service APIs or MCP tools at answer time.
 
 ## 3. TrailForge's index schema (from `scripts/rag/src/ingest.ts`)
 
-| Field | Type | Attributes | Both indexes? |
+| Field | Type | Attributes | Used by |
 |---|---|---|---|
-| `id` | String | **key**, filterable | ✓ (`<file-slug>-<chunkIndex>`) |
-| `source` | String | filterable, facetable | ✓ (file name, used for citations) |
-| `title` | String | searchable | ✓ (the doc's `# Title`) |
-| `section` | String | searchable | ✓ (the chunk's `## Heading`) |
-| `chunkIndex` | Int32 | filterable | ✓ (`chunkIndex eq 0` = one doc per product → product counts) |
-| `content` | String | searchable | ✓ (the chunk text the model reads) |
-| `contentVector` | Collection(Single), **1536 dims** | vector profile `vprofile` (HNSW, cosine) | ✓ |
-| `slug`, `category`, `brand` | String | filterable (+ facetable) | products only |
-| `priceCents` | Int32 | filterable, sortable | products only |
-| `tags` | Collection(String) | filterable, facetable | products only |
+| `id` | String | **key**, filterable | all (`<type>-<file-slug>-<chunkIndex>`) |
+| `type` | String | filterable, facetable | all: `product` or `knowledge`; every query filters on it |
+| `source` | String | filterable, facetable | all (file name, used for citations) |
+| `title` | String | searchable | all (the doc's `# Title`) |
+| `section` | String | searchable | all (the chunk's `## Heading`) |
+| `chunkIndex` | Int32 | filterable | all (`chunkIndex eq 0` = one doc per product → product counts) |
+| `content` | String | searchable | all (the chunk text the model reads) |
+| `contentVector` | Collection(Single), **1536 dims** | vector profile `vprofile` (HNSW, cosine) | all |
+| `slug`, `category`, `brand` | String | filterable (+ facetable) | products (empty on knowledge) |
+| `priceCents` | Int32 | filterable, sortable | products (empty on knowledge) |
+| `tags` | Collection(String) | filterable, facetable | products (empty on knowledge) |
 
 - **Semantic configuration** `semantic`: title field `title`, content field `content`, keywords field `section`.
 - **Chunking:** split on `##` headings, pack paragraphs up to ~900 characters with ~150 characters of overlap, keep the heading with each chunk. The text embedded is `title — section` + the chunk, so short chunks keep their context.
@@ -112,8 +113,7 @@ Root `.env`:
 ```bash
 AZURE_SEARCH_ENDPOINT=https://trailforge-search-xyz.search.windows.net
 AZURE_SEARCH_API_KEY=                     # leave EMPTY → Entra ID via az login
-AZURE_SEARCH_PRODUCTS_INDEX=tf-products
-AZURE_SEARCH_KNOWLEDGE_INDEX=tf-knowledge
+AZURE_SEARCH_INDEX=tf-rag               # one index for products + knowledge
 # and from the Azure OpenAI guide:
 AZURE_OPENAI_ENDPOINT=https://trailforge-openai-xyz.openai.azure.com
 AZURE_OPENAI_EMBEDDING_DEPLOYMENT=text-embedding-3-small
@@ -124,19 +124,19 @@ Run the pipeline:
 npm run rag:prepare     # data/products.json → rag/products/*.md (114 docs, with front-matter metadata)
 npm run rag:ingest      # for each index: createOrUpdateIndex → chunk → embed (batches of 16) → upload (batches of 500)
 ```
-Expected output: `▶ tf-products ← rag/products … ✓ N chunks uploaded`, then the same for `tf-knowledge`.
+Expected output: `▶ tf-rag (one index: type = product | knowledge)`, `574 product chunks + 380 knowledge chunks`, `✓ 954 chunks uploaded`.
 
 **Re-running** is safe: `createOrUpdateIndex` keeps the schema and `mergeOrUploadDocuments` updates chunks by `id`. **But** chunks that no longer exist (a doc got shorter, a file was deleted) are *not* removed. When docs shrink or are renamed, delete the index and ingest again:
 ```bash
 TOKEN=$(az account get-access-token --resource https://search.azure.com --query accessToken -o tsv)
-curl -X DELETE "$AZURE_SEARCH_ENDPOINT/indexes/tf-knowledge?api-version=2024-07-01" -H "Authorization: Bearer $TOKEN"
+curl -X DELETE "$AZURE_SEARCH_ENDPOINT/indexes/tf-rag?api-version=2024-07-01" -H "Authorization: Bearer $TOKEN"
 npm run rag:ingest
 ```
 
 ## 8. Test queries
 
 ### In the portal
-Service → *Indexes* → `tf-knowledge` → **Search explorer**. Try `return window electronics`, then switch to *JSON view* to add `"select": "source,section,content", "top": 3`.
+Service → *Indexes* → `tf-rag` → **Search explorer**. Try `return window electronics`, then switch to *JSON view* to add `"select": "source,section,content", "top": 3`.
 
 ### With the REST API
 ```bash
@@ -145,13 +145,13 @@ Q() { curl -s "$AZURE_SEARCH_ENDPOINT/indexes/$1/docs/search?api-version=2024-07
         -H "Authorization: Bearer $TOKEN" -H "content-type: application/json" -d "$2" | jq '.value[] | {source, section, score: .["@search.score"]}'; }
 
 # 1. keyword (BM25)
-Q tf-knowledge '{"search":"refund amount promo code tax","top":3,"select":"source,section"}'
+Q tf-rag '{"search":"refund amount promo code tax","filter":"type eq '\''knowledge'\''","top":3,"select":"source,section"}'
 
 # 2. semantic re-ranking (Basic+)
-Q tf-knowledge '{"search":"can I send back my headlamp after six weeks?","queryType":"semantic","semanticConfiguration":"semantic","top":3,"select":"source,section"}'
+Q tf-rag '{"search":"can I send back my headlamp after six weeks?","filter":"type eq '\''knowledge'\''","queryType":"semantic","semanticConfiguration":"semantic","top":3,"select":"source,section"}'
 
 # 3. filters on products
-Q tf-products '{"search":"waterproof","filter":"category eq '\''tents'\'' and priceCents le 40000","top":5,"select":"source,section"}'
+Q tf-rag '{"search":"waterproof","filter":"type eq '\''product'\'' and category eq '\''tents'\'' and priceCents le 40000","top":5,"select":"source,section"}'
 ```
 
 **Vector and hybrid queries** need the query's embedding (1536 numbers), so they're easiest in code (next section). Our index doesn't define an integrated vectorizer, so the search service won't embed text for you. That's deliberate: we control the embedding model in one place.
@@ -168,14 +168,14 @@ The assistant is a separate app that may not call the store's APIs, so **all pro
 
 | Tool | Index | What it does |
 |---|---|---|
-| `search_catalog` | `tf-products` | Hybrid search + optional filters (`category`, `brand`, `minPriceDollars`, `maxPriceDollars`, `tag`). An **empty query** browses and returns **product counts per category**: a facet over `chunkIndex eq 0` (one chunk per product), because a plain facet would count *chunks* (~5 per product). That's how "list all products" works. Several chunks per product → keeps the best chunk per `slug`. Returns name, brand, list price (snapshot), slug and `[source#chunk]`. |
-| `search_knowledge` | `tf-knowledge` | Hybrid search over policies, guides and FAQs; returns passages with `[source#chunk]` ids to cite. |
+| `search_catalog` | `tf-rag`, `type eq 'product'` | Hybrid search + optional filters (`category`, `brand`, `minPriceDollars`, `maxPriceDollars`, `tag`). An **empty query** browses and returns **product counts per category**: a facet over `chunkIndex eq 0` (one chunk per product), because a plain facet would count *chunks* (~5 per product). That's how "list all products" works. Several chunks per product → keeps the best chunk per `slug`. Returns name, brand, list price (snapshot), slug and `[source#chunk]`. |
+| `search_knowledge` | `tf-rag`, `type eq 'knowledge'` | Hybrid search over policies, guides and FAQs; returns passages with `[source#chunk]` ids to cite. |
 
 How a query runs:
 ```ts
 const vector = await embed(query);                                  // same provider/model as rag:ingest
 const res = await client.search(query || '*', {
-  top, filter,                                                      // e.g. "category eq 'tents' and priceCents le 40000"
+  top, filter,                                                      // e.g. "type eq 'product' and category eq 'tents' and priceCents le 40000"
   facets: ['category,count:20'],                                    // product counts per category
   vectorSearchOptions: { queries: [{ kind: 'vector', vector, fields: ['contentVector'], kNearestNeighborsCount: 50 }] }, // → hybrid (RRF)
   queryType: 'semantic', semanticSearchOptions: { configurationName: 'semantic' },                                    // re-rank when available
@@ -217,7 +217,7 @@ const res = await client.search(query || '*', {
 - [ ] API access control set to **Both** (or RBAC); semantic ranker enabled if Basic
 - [ ] Roles: **Search Service Contributor** + **Search Index Data Contributor** for me
 - [ ] `.env` filled (`AZURE_SEARCH_ENDPOINT`, index names, embedding deployment)
-- [ ] `npm run rag:prepare && npm run rag:ingest` uploaded both indexes
+- [ ] `npm run rag:prepare && npm run rag:ingest` built `tf-rag` (954 chunks: 574 product + 380 knowledge)
 - [ ] Search explorer + REST keyword/semantic/filter queries return sensible chunks
 - [ ] Compared keyword vs vector vs hybrid on 5 questions
 - [ ] Ask the assistant "list all products", "tents under $400", "return window for electronics?" and check the `search_catalog` / `search_knowledge` tool cards

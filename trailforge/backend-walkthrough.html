@@ -37,7 +37,7 @@ Every section points to real files. Read it next to the code. Paths are relative
         ┌──────────── AI SIDE (a separate app) ─────────────┐
         │ assistant :4100  (services/assistant)               │
         │   OpenAI Agents SDK agent                           │──► Azure OpenAI  (chat model + embeddings)
-        │   RAG tools ────────────────────────────────────────│──► Azure AI Search (tf-products, tf-knowledge)
+        │   RAG tools ────────────────────────────────────────│──► Azure AI Search (one index: tf-rag)    
         │   own DB: conversations (chat memory)               │
         └─────────────────────────────────────────────────────┘
 </code></pre>
@@ -400,8 +400,9 @@ setDefaultOpenAIClient(client);                                // the Agents SDK
 <h2>9. How the assistant calls Azure AI Search: RAG (<code>rag.ts</code>)</h2>
 <h3>9.1 Setup</h3>
 <pre><code class="language-ts">const credential = AZURE_SEARCH_API_KEY ? new AzureKeyCredential(key) : new DefaultAzureCredential();
-const products  = new SearchClient(AZURE_SEARCH_ENDPOINT, &#39;tf-products&#39;,  credential);
-const knowledge = new SearchClient(AZURE_SEARCH_ENDPOINT, &#39;tf-knowledge&#39;, credential);
+const search    = new SearchClient(AZURE_SEARCH_ENDPOINT, &#39;tf-rag&#39;, credential);  // ONE index:
+// every chunk has type = &#39;product&#39; | &#39;knowledge&#39;; search_catalog filters type eq &#39;product&#39;,
+// search_knowledge filters type eq &#39;knowledge&#39;, so the two never mix.
 const embedder  = createOpenAIClient(ai.embeddings);   // Azure OpenAI, for query embeddings
 </code></pre>
 <h3>9.2 What one <code>search_knowledge</code> call does</h3>
@@ -409,8 +410,9 @@ const embedder  = createOpenAIClient(ai.embeddings);   // Azure OpenAI, for quer
 const vector = (await embedder.embeddings.create({ model: &#39;text-embedding-3-small&#39;, input: query })).data[0].embedding;
 
 // 2. HYBRID search: keywords + vector, then the semantic re-ranker
-await knowledge.search(query, {
+await search.search(query, {
   top: 5,
+  filter: &quot;type eq &#39;knowledge&#39;&quot;,
   select: [&#39;id&#39;,&#39;source&#39;,&#39;title&#39;,&#39;section&#39;,&#39;chunkIndex&#39;,&#39;content&#39;],          // only fields this index has
   vectorSearchOptions: { queries: [{ kind: &#39;vector&#39;, vector, fields: [&#39;contentVector&#39;], kNearestNeighborsCount: 50 }] },
   queryType: &#39;semantic&#39;, semanticSearchOptions: { configurationName: &#39;semantic&#39; },
@@ -419,16 +421,16 @@ await knowledge.search(query, {
 // 3. format passages with citation ids for the model
 &quot;[returns-and-refunds.md#1] Returns and Refunds Policy › The return window\n- Electronics … 30 days …&quot;
 </code></pre>
-<p>The SDK turns that into <code>POST https://&lt;search&gt;.search.windows.net/indexes/tf-knowledge/docs/search?api-version=…</code> with an Entra token (your <strong>Search Index Data Contributor</strong> role locally; the Managed Identity on Azure). Azure AI Search runs BM25 keyword ranking and HNSW vector nearest-neighbours, fuses them with <strong>RRF</strong>, and re-ranks with the semantic model.</p>
+<p>The SDK turns that into <code>POST https://&lt;search&gt;.search.windows.net/indexes/tf-rag/docs/search?api-version=…</code> with an Entra token (your <strong>Search Index Data Contributor</strong> role locally; the Managed Identity on Azure). Azure AI Search runs BM25 keyword ranking and HNSW vector nearest-neighbours, fuses them with <strong>RRF</strong>, and re-ranks with the semantic model.</p>
 <h3>9.3 <code>search_catalog</code> adds filters and counts</h3>
 <ul>
-<li><strong>Filters</strong> (OData) built from tool arguments: <code>category eq &#39;tents&#39; and priceCents le 40000 and tags/any(t: t eq &#39;vegan&#39;)</code>.</li>
+<li><strong>Filters</strong> (OData) built from tool arguments, always starting with the type: <code>type eq &#39;product&#39; and category eq &#39;tents&#39; and priceCents le 40000 and tags/any(t: t eq &#39;vegan&#39;)</code>.</li>
 <li><strong>Dedupe:</strong> each product has about 5 chunks; keep the best chunk per <code>slug</code>.</li>
 <li><strong>&quot;List all products&quot;:</strong> a second query <code>search(&#39;*&#39;, { top: 0, facets: [&#39;category&#39;], filter: &#39;chunkIndex eq 0&#39; })</code> counts <strong>one chunk per product</strong>, so the counts are products (12 per category), not chunks.</li>
 <li><strong>Fallbacks:</strong> no <code>AZURE_SEARCH_ENDPOINT</code> → <code>SEARCH_UNAVAILABLE</code> (the agent says search is unavailable instead of guessing). Semantic ranker not available → plain hybrid.</li>
 </ul>
 <h3>9.4 Where the index came from (<code>scripts/rag/src/ingest.ts</code>)</h3>
-<p>Offline, not at chat time: read <code>rag/*/*.md</code> → split on <code>##</code> headings (~900 chars, 150 overlap) → embed in batches of 16 with Azure OpenAI → <code>createOrUpdateIndex(schema)</code> → <code>mergeOrUploadDocuments</code> in batches of 500.</p>
+<p>Offline, not at chat time: read <code>rag/products/*.md</code> (type <code>product</code>) and <code>rag/knowledge/*.md</code> (type <code>knowledge</code>) → split on <code>##</code> headings (~900 chars, 150 overlap) → embed in batches of 16 with Azure OpenAI → <code>createOrUpdateIndex(schema)</code> → <code>mergeOrUploadDocuments</code> in batches of 500, all into the one <code>tf-rag</code> index.</p>
 <h2>10. All the credentials in one table</h2>
 <table>
 <thead>
@@ -525,7 +527,7 @@ await knowledge.search(query, {
 <li><strong>Call a service directly:</strong> <code>curl localhost:4002/products?q=tent</code> (the catalog, bypassing the gateway). Then <code>curl localhost:4004/me/orders</code> without a token → 401. Why?</li>
 <li><strong>Speak MCP:</strong> <code>npm run mcp:cli -- --server account --method tools/call --tool-name get_my_orders</code> → <code>AUTH_REQUIRED</code>. Then add <code>--header &quot;Authorization: Bearer &lt;token&gt;&quot;</code> (see the MCP guide).</li>
 <li><strong>See the agent loop:</strong> in <code>services/assistant/src/index.ts</code> → <code>forward()</code>, add <code>console.log(event.type, event.name)</code> and send one chat message. Count the model calls and tool calls.</li>
-<li><strong>Query RAG yourself:</strong> in Azure portal → <code>tf-knowledge</code> → Search explorer, search <code>GPS watch return</code>, and compare with what <code>search_knowledge</code> returned in the chat tool card.</li>
+<li><strong>Query RAG yourself:</strong> in Azure portal → <code>tf-rag</code> → Search explorer, search <code>GPS watch return</code> (JSON view: add <code>&quot;filter&quot;: &quot;type eq &#39;knowledge&#39;&quot;</code>), and compare with what <code>search_knowledge</code> returned in the chat tool card.</li>
 <li><strong>Break it on purpose:</strong> stop <code>mcp-catalog</code>, ask &quot;is the Ridgeline tent in stock?&quot; and see how the assistant degrades.</li>
 </ol>
 <h2>14. Glossary</h2>
